@@ -11,16 +11,85 @@
       html,
       body {
         height: 100%;
+        margin: 0;
+        padding: 0;
+        background-color: #000000;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
       }
       /* These styles disable body scrolling if you are using <ScrollView> */
       body {
         overflow: hidden;
+        width: 100%;
       }
       /* These styles make the root element full-height */
       #root {
         display: flex;
         height: 100%;
         flex: 1;
+        background-color: #000000;
+        position: relative;
+        -webkit-overflow-scrolling: touch;
+      }
+      /* Enable touch scrolling for nested divs */
+      #root div {
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+      }
+      /* CRITICAL: ScrollView containers - allow content to expand */
+      #root > div > div {
+        -webkit-overflow-scrolling: touch !important;
+        touch-action: pan-y !important;
+        overflow-y: auto !important;
+        min-height: 100% !important;
+        position: relative !important;
+      }
+      /* Target React Native Web ScrollView containers */
+      div[style*="overflow"],
+      div[style*="flex: 1"],
+      div[style*="flex:1"],
+      div[data-rn-scroll-view],
+      div[class*="ScrollView"] {
+        -webkit-overflow-scrolling: touch !important;
+        touch-action: pan-y !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        min-height: 100% !important;
+        position: relative !important;
+      }
+      /* Ensure ScrollView content containers can expand */
+      div[style*="flexGrow"],
+      div[style*="flex-grow"],
+      div[style*="paddingBottom"] {
+        min-height: 100%;
+      }
+      /* Force enable touch scrolling on mobile */
+      @media (hover: none) and (pointer: coarse) {
+        #root > div > div {
+          overflow-y: scroll !important;
+          -webkit-overflow-scrolling: touch !important;
+          touch-action: pan-y !important;
+          min-height: 100% !important;
+        }
+        /* Ensure ScrollView content is visible and scrollable */
+        div[style*="paddingBottom"],
+        div[style*="flexGrow"] {
+          overflow-y: visible !important;
+          -webkit-overflow-scrolling: touch !important;
+        }
+      }
+      /* Custom thin dark-theme scrollbar (Spec #5a) */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.16);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
+      ::-webkit-scrollbar-corner { background: transparent; }
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
       }
     </style>
   <link rel="icon" href="/favicon.ico" /></head>
@@ -32,6 +101,6 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/_expo/static/js/web/AppEntry-7e3bf3e4b79004425b930677e5d015e0.js" defer></script>
+  <script src="/_expo/static/js/web/AppEntry-f45ebb856cc51fdd0fff95bf21d77d1d.js" defer></script>
 </body>
 </html>
