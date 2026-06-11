@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output — deployed separately via deploy.ps1 to the hobgoblin-web repo
+# (dist/ carries its own .git; keep it out of the source repo entirely)
+dist/
+web-build/
+.expo/
+.expo-shared/
+
+# Env & secrets
+.env
+.env.*
+
+# OS / editor noise
+.DS_Store
+._*
+Thumbs.db
+*.log
+*.tmp
+zz_test.txt

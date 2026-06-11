@@ -1,0 +1,22 @@
+{
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "local": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.ahomerun.net/api",
+        "EXPO_PUBLIC_APP_KEY": "HeXlf23CVxCGIFpvpaYzoh3vCYWKKXh6mp8AOzdz"
+      }
+    },
+    "production": {
+      "local": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.ahomerun.net/api",
+        "EXPO_PUBLIC_APP_KEY": "HeXlf23CVxCGIFpvpaYzoh3vCYWKKXh6mp8AOzdz"
+      }
+    }
+  },
+  "cli": {
+    "appVersionSource": "remote"
+  }
+}
