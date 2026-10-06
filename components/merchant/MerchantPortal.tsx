@@ -24,6 +24,19 @@ import { showToast } from '../common/Toast';
 import RestaurantDetailView from '../RestaurantDetailView';
 import HelpFAQView from '../HelpFAQView';
 
+/** Alert.alert is a no-op on react-native-web, so confirmations use window.confirm there. */
+function confirmAction(title: string, message: string, confirmLabel: string): Promise<boolean> {
+  if (Platform.OS === 'web') {
+    return Promise.resolve(typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) =>
+    Alert.alert(title, message, [
+      { text: 'Keep', style: 'cancel', onPress: () => resolve(false) },
+      { text: confirmLabel, style: 'destructive', onPress: () => resolve(true) },
+    ]),
+  );
+}
+
 /** UX cap for the restaurant (store) description field (the DB column is `text`). */
 const DESCRIPTION_MAX_LENGTH = 500;
 
@@ -166,6 +179,7 @@ export default function MerchantPortal({ onExit }: { onExit: () => void }) {
   const bottomNavHeight = 56 + Math.max(10, insets.bottom);
 
   const [storeStatus, setStoreStatus] = useState<StoreStatus>('open');
+  const [storeName, setStoreName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<Page>('onboarding');
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
@@ -183,6 +197,7 @@ export default function MerchantPortal({ onExit }: { onExit: () => void }) {
         const store = await MerchantActions.getStore();
         if (!mounted) return;
         setStoreStatus(store.status);
+        setStoreName(store.name || null);
       } catch {
         // no restaurant yet — onboarding will handle it
       }
@@ -303,7 +318,7 @@ export default function MerchantPortal({ onExit }: { onExit: () => void }) {
     <View style={styles.container}>
       <View style={styles.topbar}>
         <View>
-          <Text style={styles.topbarTitle}>{restaurant?.name ?? 'Restaurant'}</Text>
+          <Text style={styles.topbarTitle}>{storeName ?? restaurant?.name ?? 'Restaurant'}</Text>
           <View style={styles.topbarMetaRow}>
             <View style={styles.statusChip}>
               <Text style={styles.statusChipText}>{statusLabel[storeStatus]}</Text>
@@ -598,50 +613,31 @@ function MerchantOrders({
               <View style={styles.rowGap}>
                 <TouchableOpacity
                   style={styles.secondaryBtnInline}
-                  onPress={() =>
-                    Alert.alert('Reject order?', 'This will cancel the order.', [
-                      { text: 'Keep', style: 'cancel' },
-                      {
-                        text: 'Reject',
-                        style: 'destructive',
-                        onPress: async () => {
-                          try {
-                            await MerchantActions.rejectOrder(o.id);
-                            await onRefresh();
-                          } catch (e: any) {
-                            Alert.alert('Cannot reject', e?.message ?? 'Not allowed');
-                          }
-                        },
-                      },
-                    ])
-                  }
+                  onPress={async () => {
+                    if (!(await confirmAction('Reject order?', 'This will cancel the order.', 'Reject'))) return;
+                    try {
+                      await MerchantActions.rejectOrder(o.id);
+                      showToast('Order rejected');
+                      await onRefresh();
+                    } catch (e: any) {
+                      showToast(e?.message ?? 'Could not reject this order');
+                    }
+                  }}
                   activeOpacity={0.85}
                 >
                   <Text style={styles.secondaryBtnText}>Reject</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.primaryBtnInline}
-                  onPress={() =>
-                    Alert.alert('Accept order', 'Select prep time:', [
-                      { text: '10 min', onPress: async () => {
-                        await MerchantActions.acceptOrder(o.id, 10);
-                        await onRefresh();
-                      }},
-                      { text: '15 min', onPress: async () => {
-                        await MerchantActions.acceptOrder(o.id, 15);
-                        await onRefresh();
-                      }},
-                      { text: '20 min', onPress: async () => {
-                        await MerchantActions.acceptOrder(o.id, 20);
-                        await onRefresh();
-                      }},
-                      { text: '30 min', onPress: async () => {
-                        await MerchantActions.acceptOrder(o.id, 30);
-                        await onRefresh();
-                      }},
-                      { text: 'Cancel', style: 'cancel' },
-                    ])
-                  }
+                  onPress={async () => {
+                    try {
+                      await MerchantActions.acceptOrder(o.id, 15);
+                      showToast('Order accepted — drivers can now claim it');
+                      await onRefresh();
+                    } catch (e: any) {
+                      showToast(e?.message ?? 'Could not accept this order');
+                    }
+                  }}
                   activeOpacity={0.85}
                 >
                   <Text style={styles.primaryBtnText}>Accept</Text>
@@ -650,37 +646,30 @@ function MerchantOrders({
             )}
 
             {tab === 'preparing' && (
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={async () => {
-                  try {
-                    await MerchantActions.markOrderReady(o.id);
-                    await onRefresh();
-                  } catch (e: any) {
-                    Alert.alert('Cannot mark ready', e?.message ?? 'Not allowed');
-                  }
-                }}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.primaryBtnText}>Mark Ready</Text>
-              </TouchableOpacity>
+              <>
+                <Text style={styles.cardSubtitle}>{o.driverName ? `Driver: ${o.driverName}` : 'Waiting for a driver'}</Text>
+                <TouchableOpacity
+                  style={styles.primaryBtn}
+                  onPress={async () => {
+                    try {
+                      await MerchantActions.markOrderReady(o.id);
+                      showToast('Marked ready for pickup');
+                      await onRefresh();
+                    } catch (e: any) {
+                      showToast(e?.message ?? 'Could not mark ready');
+                    }
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.primaryBtnText}>Mark Ready</Text>
+                </TouchableOpacity>
+              </>
             )}
 
             {tab === 'ready' && (
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={async () => {
-                  try {
-                    await MerchantActions.confirmPickup(o.id);
-                    await onRefresh();
-                  } catch (e: any) {
-                    Alert.alert('Cannot confirm pickup', e?.message ?? 'Not allowed');
-                  }
-                }}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.primaryBtnText}>Confirm Pickup</Text>
-              </TouchableOpacity>
+              <Text style={styles.metric}>
+                {o.driverName ? `${o.driverName} is on the way to pick this up.` : 'Waiting for a driver to accept.'}
+              </Text>
             )}
           </View>
         ))
@@ -734,7 +723,8 @@ function MerchantOrderDetail({ orderId, onBack }: { orderId: number; onBack: () 
 
       <View style={styles.actionsCard}>
         <Text style={styles.actionsTitle}>Actions</Text>
-        {status === 'created' && (
+        {!!order.driverName && <Text style={styles.metric}>Driver: {order.driverName}</Text>}
+        {status === 'pending' && (
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={async () => {
@@ -743,15 +733,15 @@ function MerchantOrderDetail({ orderId, onBack }: { orderId: number; onBack: () 
                 const updated = await MerchantActions.getOrder(orderId);
                 if (updated) setOrder(updated);
               } catch (e: any) {
-                Alert.alert('Error', e?.message ?? 'Cannot start preparing');
+                showToast(e?.message ?? 'Cannot start preparing');
               }
             }}
             activeOpacity={0.85}
           >
-            <Text style={styles.primaryBtnText}>Start preparing</Text>
+            <Text style={styles.primaryBtnText}>Accept and start preparing</Text>
           </TouchableOpacity>
         )}
-        {status === 'preparing' && (
+        {(status === 'confirmed' || status === 'preparing') && (
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={async () => {
@@ -760,7 +750,7 @@ function MerchantOrderDetail({ orderId, onBack }: { orderId: number; onBack: () 
                 const updated = await MerchantActions.getOrder(orderId);
                 if (updated) setOrder(updated);
               } catch (e: any) {
-                Alert.alert('Error', e?.message ?? 'Cannot mark ready');
+                showToast(e?.message ?? 'Cannot mark ready');
               }
             }}
             activeOpacity={0.85}
@@ -768,15 +758,16 @@ function MerchantOrderDetail({ orderId, onBack }: { orderId: number; onBack: () 
             <Text style={styles.primaryBtnText}>Mark ready</Text>
           </TouchableOpacity>
         )}
-        {(status === 'created' || status === 'preparing' || status === 'ready') && (
+        {(status === 'pending' || status === 'confirmed' || status === 'preparing' || status === 'ready') && (
           <TouchableOpacity
             style={styles.secondaryBtn}
             onPress={async () => {
+              if (!(await confirmAction('Cancel order?', 'The customer and any assigned driver will see it as cancelled.', 'Cancel order'))) return;
               try {
                 await MerchantActions.rejectOrder(orderId);
                 onBack();
               } catch (e: any) {
-                Alert.alert('Error', e?.message ?? 'Cannot cancel order');
+                showToast(e?.message ?? 'Cannot cancel order');
               }
             }}
             activeOpacity={0.85}
@@ -1734,7 +1725,7 @@ function MerchantSettings({
 }) {
   // Live store profile from the engine (name, cuisine, description, logo_url, notification_email).
   const [store, setStore] = useState<any | null>(null);
-  const [profileDraft, setProfileDraft] = useState<{ name: string; cuisine: string; description: string; notification_email: string } | null>(null);
+  const [profileDraft, setProfileDraft] = useState<{ name: string; cuisine: string; description: string; address: string; notification_email: string; notification_phone: string } | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
@@ -1749,7 +1740,9 @@ function MerchantSettings({
           name:               (s as any).name ?? '',
           cuisine:            (s as any).cuisine ?? '',
           description:        (s as any).description ?? '',
+          address:            (s as any).address ?? '',
           notification_email: (s as any).notification_email ?? '',
+          notification_phone: (s as any).notification_phone ?? '',
         });
       } catch (err: any) {
         showToast(err?.message || "Couldn't load store profile", 'error');
@@ -1767,7 +1760,9 @@ function MerchantSettings({
         name:               profileDraft.name.trim() || undefined,
         cuisine:            profileDraft.cuisine.trim() || null,
         description:        profileDraft.description.trim() || null,
+        address:            profileDraft.address.trim() || null,
         notification_email: profileDraft.notification_email.trim().toLowerCase() || null,
+        notification_phone: profileDraft.notification_phone.trim() || null,
       });
       setStore(updated);
       showToast('Profile saved', 'success');
@@ -1881,6 +1876,25 @@ function MerchantSettings({
           placeholderTextColor="rgba(255,255,255,0.55)"
           style={styles.input}
           autoCapitalize="words"
+        />
+
+        <Text style={styles.fieldLabel}>Pickup address</Text>
+        <TextInput
+          value={profileDraft.address}
+          onChangeText={(t) => setProfileDraft({ ...profileDraft, address: t })}
+          placeholder="Where drivers collect orders"
+          placeholderTextColor="rgba(255,255,255,0.55)"
+          style={styles.input}
+        />
+
+        <Text style={styles.fieldLabel}>Phone for drivers</Text>
+        <TextInput
+          value={profileDraft.notification_phone}
+          onChangeText={(t) => setProfileDraft({ ...profileDraft, notification_phone: t })}
+          placeholder="Optional"
+          placeholderTextColor="rgba(255,255,255,0.55)"
+          style={styles.input}
+          keyboardType="phone-pad"
         />
 
         <View style={styles.descriptionHeaderRow}>

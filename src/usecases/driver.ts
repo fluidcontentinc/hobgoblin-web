@@ -1,8 +1,7 @@
 import { Repos } from './repos';
 import { StoreActions } from './store';
-import { getDriverOnline, setDriverOnline, getDeclinedOffers, addDeclinedOffer, clearDeclinedOffers, isDriverOnboarded, setDriverOnboarded, clearDriverPortal } from '../../utils/portal';
+import { clearDeclinedOffers, isDriverOnboarded, setDriverOnboarded, clearDriverPortal } from '../../utils/portal';
 import { clearAuth } from '../../utils/auth';
-import type { DriverDeliveryStatus } from '../contracts/status';
 
 export const DriverActions = {
   async getState() {
@@ -33,8 +32,16 @@ export const DriverActions = {
     return await Repos.driver.getActive();
   },
 
-  async advanceDelivery(id: number, status: DriverDeliveryStatus) {
-    await Repos.driver.advanceDelivery(id, { status });
+  async confirmPickup(id: number) {
+    return await Repos.driver.confirmPickup(id);
+  },
+
+  async completeDelivery(id: number) {
+    await Repos.driver.completeDelivery(id);
+  },
+
+  async releaseDelivery(id: number) {
+    await Repos.driver.releaseDelivery(id);
   },
 
   async getEarnings() {
@@ -61,5 +68,3 @@ export const DriverActions = {
     await clearDeclinedOffers();
   },
 };
-
-

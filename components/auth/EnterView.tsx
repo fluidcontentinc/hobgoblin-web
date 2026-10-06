@@ -4,15 +4,16 @@ import type { AuthRole } from '../../utils/auth';
 
 /**
  * Roles that can self-register on marketplace-engine.
- * Engine `RegisterRequest` accepts: customer | owner | parent | restaurant.
- * Driver and Kid are provisioned by admins/parents and cannot self-register,
- * so they go straight to LoginView.
+ * Engine `RegisterRequest` accepts: customer | owner | parent | restaurant | driver.
+ * Drivers can sign up but see no orders until an admin approves them.
+ * Kids are provisioned by parents (invite code) and cannot self-register.
  */
-type SignupCapableRole = Extract<AuthRole, 'parent' | 'restaurant'>;
+type SignupCapableRole = Extract<AuthRole, 'parent' | 'restaurant' | 'driver'>;
 
 const choiceCopy: Record<SignupCapableRole, { title: string; subtitle: string }> = {
   parent:     { title: 'Parent',     subtitle: 'Log in or create an account' },
   restaurant: { title: 'Restaurant', subtitle: 'Log in or create an account' },
+  driver:     { title: 'Driver',     subtitle: 'Deliver orders from local restaurants' },
 };
 
 export default function EnterView({
@@ -79,10 +80,9 @@ export default function EnterView({
         <Text style={styles.buttonText}>Restaurant</Text>
       </TouchableOpacity>
 
-      {/* Driver role hidden for now — re-enable when the driver experience ships */}
-      {/* <TouchableOpacity style={styles.button} onPress={() => onPickRole('driver')} activeOpacity={0.8}>
+      <TouchableOpacity style={styles.button} onPress={() => setChoiceRole('driver')} activeOpacity={0.8}>
         <Text style={styles.buttonText}>Driver</Text>
-      </TouchableOpacity> */}
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.button} onPress={() => onPickRole('kid')} activeOpacity={0.8}>
         <Text style={styles.buttonText}>Kid</Text>

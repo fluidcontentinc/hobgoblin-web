@@ -36,7 +36,9 @@ export class ApiOrdersRepository implements OrdersRepository {
         quantity:     it.quantity ?? 1,
       }));
 
-      const payload = { items };
+      const payload: Record<string, any> = { items };
+      if (order.deliveryAddress) payload.delivery_address = order.deliveryAddress;
+      if (order.deliveryNotes) payload.delivery_notes = order.deliveryNotes;
       const data = await api.post('/orders', payload);
       const transformed = this.transformOrder(data);
       if (!transformed) throw new Error('Empty response from order create');
@@ -68,7 +70,7 @@ export class ApiOrdersRepository implements OrdersRepository {
       id: data.id,
       restaurantId:   data.restaurant_id ?? data.restaurantId,
       restaurantName: data.restaurant?.name ?? data.restaurant_name ?? data.restaurantName,
-      items:          Array.isArray(data.items) ? data.items : [],
+      items:          Array.isArray(data.items) ? data.items.map(itemLabel) : [],
       total,
       date:           data.created_at ?? data.date ?? new Date().toISOString(),
       state:          data.state,
@@ -77,6 +79,17 @@ export class ApiOrdersRepository implements OrdersRepository {
       type:           data.type,
       buyerEmail:     data.buyer?.email ?? data.buyer_email ?? data.buyerEmail,
       driverEmail:    data.driver?.email ?? data.driver_email ?? data.driverEmail,
+      driverName:     data.driver?.name ?? null,
+      deliveryAddress: data.delivery_address ?? null,
+      deliveryNotes:  data.delivery_notes ?? null,
     };
   }
+}
+
+/** Engine order items are objects ({title, quantity, menuItem}); the list UI shows short labels. */
+function itemLabel(it: any): string {
+  if (typeof it === 'string') return it;
+  const name = it?.menu_item?.name ?? it?.menuItem?.name ?? it?.title ?? 'Item';
+  const qty = typeof it?.quantity === 'number' ? it.quantity : 1;
+  return qty > 1 ? `${qty} x ${name}` : name;
 }

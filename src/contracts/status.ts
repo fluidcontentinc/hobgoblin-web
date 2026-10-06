@@ -1,11 +1,13 @@
 // Contract-first status enums, aligned to docs/PORTALS_SPEC.md
 
+// Mirrors marketplace-engine config('marketplace.order_states').
 export const MerchantOrderStatuses = [
-  'created',
-  'accepted',
+  'pending',
+  'confirmed',
   'preparing',
   'ready',
   'picked_up',
+  'delivered',
   'completed',
   'cancelled',
 ] as const;

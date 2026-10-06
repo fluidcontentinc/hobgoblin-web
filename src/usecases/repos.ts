@@ -6,6 +6,7 @@ import { ApiAdventureRepository } from '../repositories/ApiAdventureRepository';
 import { ApiParentRepository } from '../repositories/ApiParentRepository';
 import { ApiMerchantRepository } from '../repositories/ApiMerchantRepository';
 import { ApiPathMapRepository } from '../repositories/ApiPathMapRepository';
+import { ApiDriverRepository } from '../repositories/ApiDriverRepository';
 
 const apiAuthRepository = new ApiAuthRepository();
 const apiRestaurantsRepository = new ApiRestaurantsRepository();
@@ -17,6 +18,7 @@ const apiMerchantRepository = new ApiMerchantRepository();
 // Backend-backed shared map. LocalPathMapRepository remains in the tree for
 // reference / offline fallback experiments but is no longer wired up.
 const pathMapRepository = new ApiPathMapRepository();
+const apiDriverRepository = new ApiDriverRepository();
 
 export const Repos = {
   auth: apiAuthRepository,
@@ -27,5 +29,5 @@ export const Repos = {
   parent: apiParentRepository,
   merchant: apiMerchantRepository,
   pathMap: pathMapRepository,
-  driver: null as any, // TODO: Add ApiDriverRepository when driver backend is built
+  driver: apiDriverRepository,
 };

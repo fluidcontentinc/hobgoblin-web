@@ -26,7 +26,7 @@ export const MerchantActions = {
     return await Repos.merchant.patchHours(hours);
   },
 
-  async setStoreProfile(input: { name?: string; cuisine?: string | null; description?: string | null; notification_email?: string | null; notification_phone?: string | null }) {
+  async setStoreProfile(input: { name?: string; cuisine?: string | null; description?: string | null; address?: string | null; notification_email?: string | null; notification_phone?: string | null }) {
     return await Repos.merchant.patchStore(input);
   },
 
@@ -42,7 +42,9 @@ export const MerchantActions = {
     return await Repos.merchant.getOrder(id);
   },
 
+  /** pending -> confirmed (opens the delivery job for drivers) -> preparing. */
   async acceptOrder(id: number, prepTimeMinutes: number) {
+    await Repos.merchant.patchOrder(id, { status: 'confirmed' });
     return await Repos.merchant.patchOrder(id, { status: 'preparing', prepTimeMinutes });
   },
 
@@ -52,10 +54,6 @@ export const MerchantActions = {
 
   async markOrderReady(id: number) {
     return await Repos.merchant.patchOrder(id, { status: 'ready' });
-  },
-
-  async confirmPickup(id: number) {
-    return await Repos.merchant.patchOrder(id, { status: 'picked_up' });
   },
 
   async getMenu(): Promise<MenuItemDto[]> {

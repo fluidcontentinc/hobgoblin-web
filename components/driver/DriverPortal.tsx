@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  AppState,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -25,18 +26,33 @@ if (Platform.OS !== 'web') {
     console.warn('react-native-maps not available:', e);
   }
 }
-import { useCurrentUser, useOrders, StoreActions } from '../../src/usecases';
-import { DriverActions } from '../../src/usecases';
-import type { DriverOfferDto, DriverActiveDeliveryDto } from '../../src/contracts/dto';
-import type { DriverDeliveryStatus } from '../../src/contracts/status';
-import type { Order } from '../../state';
-import { OrderStates, OrderEvents } from '../../utils/stateMachine';
-import { applyOrderEvent } from '../../utils/stateMachine';
+import { useCurrentUser, DriverActions } from '../../src/usecases';
+import type { DriverOfferDto, DriverActiveDeliveryDto, DriverEarningsDto, DriverPlaceDto } from '../../src/contracts/dto';
 import { safeGetJson, safeSetJson } from '../../utils/storage';
 import HelpFAQView from '../HelpFAQView';
 
 type Page = 'onboarding' | 'home' | 'earnings' | 'settings';
-type DeliveryStep = 'accepted' | 'arrived_pickup' | 'picked_up' | 'arrived_dropoff' | 'delivered';
+
+const POLL_MS = 10000;
+
+function errorText(e: any, fallback: string): string {
+  return (e && typeof e.message === 'string' && e.message) || fallback;
+}
+
+function directionsUrl(p: DriverPlaceDto): string | null {
+  if (p.lat != null && p.lng != null) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`;
+  }
+  if (p.address) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.address)}`;
+  }
+  return null;
+}
+
+function openDirections(p: DriverPlaceDto) {
+  const url = directionsUrl(p);
+  if (url) Linking.openURL(url).catch(() => {});
+}
 
 function DriverBottomNav({ current, onGo, bottomInset }: { current: Page; onGo: (p: Page) => void; bottomInset: number }) {
   const items: Array<{ id: Page; label: string }> = [
@@ -63,7 +79,29 @@ function BottomSheet({ children, bottomOffset }: { children: React.ReactNode; bo
   return (
     <View style={[styles.sheet, { bottom: bottomOffset }]}>
       <View style={styles.sheetHandle} />
-      {children}
+      <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
+        {children}
+      </ScrollView>
+    </View>
+  );
+}
+
+function Notice({ text, tone }: { text: string | null; tone: 'info' | 'error' }) {
+  if (!text) return null;
+  return <Text style={[styles.notice, tone === 'error' && styles.noticeError]}>{text}</Text>;
+}
+
+function PendingApproval({ onRefresh, checking }: { onRefresh: () => void; checking: boolean }) {
+  return (
+    <View>
+      <Text style={styles.cardTitle}>Account under review</Text>
+      <Text style={styles.metric}>
+        Thanks for signing up to deliver. The Hobgoblin team reviews every driver before they can see orders.
+        You'll be able to go online as soon as you're approved.
+      </Text>
+      <TouchableOpacity style={styles.secondaryBtn} onPress={onRefresh} activeOpacity={0.85} disabled={checking}>
+        {checking ? <ActivityIndicator color="#C9943D" /> : <Text style={styles.secondaryBtnText}>Check status</Text>}
+      </TouchableOpacity>
     </View>
   );
 }
@@ -71,190 +109,232 @@ function BottomSheet({ children, bottomOffset }: { children: React.ReactNode; bo
 function OffersSheet({
   online,
   offers,
+  busy,
   onGoOnline,
   onDecline,
   onAccept,
 }: {
   online: boolean;
   offers: DriverOfferDto[];
+  busy: boolean;
   onGoOnline: () => void;
   onDecline: (offerId: number) => void;
   onAccept: (offerId: number) => void;
 }) {
-  const offersCount = online ? offers.length : 0;
+  if (!online) {
+    return (
+      <View>
+        <Text style={styles.cardTitle}>You're offline</Text>
+        <Text style={styles.metric}>Go online to start receiving delivery offers from nearby restaurants.</Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={onGoOnline} activeOpacity={0.85}>
+          <Text style={styles.primaryBtnText}>Go Online</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
-  // Pick a single "interruptive" offer (newest first)
-  const topOffer = offersCount > 0 ? offers.slice().sort((a, b) => b.id - a.id)[0] : null;
-
-  const [offerSecondsLeft, setOfferSecondsLeft] = useState(30);
-  useEffect(() => {
-    if (!online || !topOffer) return;
-    setOfferSecondsLeft(30);
-    const t = setInterval(() => {
-      setOfferSecondsLeft((s) => (s > 0 ? s - 1 : 0));
-    }, 1000);
-    return () => clearInterval(t);
-  }, [online, topOffer?.id]);
+  const top = offers[0] ?? null;
 
   return (
-    <View style={styles.sheetContent}>
+    <View>
       <View style={styles.rowBetween}>
-        <Text style={styles.cardTitle}>Home</Text>
-        <Text style={styles.cardSubtitle}>{online ? `Online • ${offersCount} offer(s)` : 'Offline • 0 offers'}</Text>
+        <Text style={styles.cardTitle}>Offers</Text>
+        <Text style={styles.cardSubtitle}>{offers.length} available</Text>
       </View>
 
-      {!online ? (
-        <>
-          <View style={{ height: 8 }} />
-          <Text style={styles.metric}>No active delivery.</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={onGoOnline} activeOpacity={0.85}>
-            <Text style={styles.primaryBtnText}>Go Online</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.secondaryBtn}
-            onPress={() => Alert.alert('How offers work', 'When you’re online, new READY orders will appear here as offers. Accept to start a delivery.')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.secondaryBtnText}>Learn how offers work</Text>
-          </TouchableOpacity>
-        </>
-      ) : offers.length === 0 ? (
-        <>
-          <View style={{ height: 8 }} />
-          <Text style={styles.metric}>No active delivery.</Text>
-          <Text style={styles.emptyText}>Searching for offers…</Text>
-        </>
+      {!top ? (
+        <View style={styles.searchingRow}>
+          <ActivityIndicator color="#C9943D" size="small" />
+          <Text style={styles.emptyTextInline}>Looking for orders near you…</Text>
+        </View>
       ) : (
-        topOffer && (
-          <View style={styles.offerCard}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.offerPayout}>${topOffer.payout.toFixed(2)}</Text>
-              <Text style={styles.badge}>Offer</Text>
-            </View>
-
-            <Text style={styles.cardSubtitle}>Est. {topOffer.etaMinutes} min • {topOffer.dropoffDistanceMiles.toFixed(1)} mi</Text>
-            <View style={{ height: 8 }} />
-            <Text style={styles.metric}>Pickup</Text>
-            <Text style={styles.offerPickup}>{topOffer.restaurantName}</Text>
-            <View style={{ height: 8 }} />
-            <Text style={styles.cardSubtitle}>Expires in {offerSecondsLeft}s</Text>
-
-            <View style={styles.rowGap}>
-              <TouchableOpacity style={styles.secondaryBtnInline} onPress={() => onDecline(topOffer.id)} activeOpacity={0.85}>
-                <Text style={styles.secondaryBtnText}>Decline</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryBtnInline} onPress={() => onAccept(topOffer.id)} activeOpacity={0.85}>
-                <Text style={styles.primaryBtnText}>Accept</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.offerCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.offerPayout}>${top.payout.toFixed(2)}</Text>
+            <Text style={styles.badge}>{top.itemCount} item{top.itemCount === 1 ? '' : 's'}</Text>
           </View>
-        )
+          <View style={{ height: 8 }} />
+          <Text style={styles.cardSubtitle}>Pickup</Text>
+          <Text style={styles.offerPickup}>{top.restaurantName}</Text>
+          {!!top.pickup.address && <Text style={styles.metric}>{top.pickup.address}</Text>}
+          <Text style={styles.hint}>The drop-off address appears after you accept.</Text>
+
+          <View style={styles.rowGap}>
+            <TouchableOpacity style={styles.secondaryBtnInline} onPress={() => onDecline(top.id)} activeOpacity={0.85} disabled={busy}>
+              <Text style={styles.secondaryBtnText}>Decline</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.primaryBtnInline} onPress={() => onAccept(top.id)} activeOpacity={0.85} disabled={busy}>
+              {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryBtnText}>Accept</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
     </View>
   );
 }
 
-function ActiveDeliverySheet({ order, driverEmail, onDone }: { order: Order; driverEmail: string; onDone: () => void }) {
-  // This component is now driven by DriverPortal's local delivery step state.
-  // (Kept here for legacy call sites; actual implementation lives in DriverPortal below.)
-  const status = (order.state || order.status || '').toLowerCase();
+function ActiveDeliveryCard({
+  delivery,
+  busy,
+  onPickup,
+  onComplete,
+  onRelease,
+}: {
+  delivery: DriverActiveDeliveryDto;
+  busy: boolean;
+  onPickup: () => void;
+  onComplete: () => void;
+  onRelease: () => void;
+}) {
+  const atPickupStage = delivery.status === 'accepted';
+  const ready = delivery.orderState === 'ready';
+  const callUrl = delivery.restaurantPhone ? `tel:${delivery.restaurantPhone.replace(/[^0-9+]/g, '')}` : null;
+
+  if (atPickupStage) {
+    return (
+      <View>
+        <View style={styles.rowBetween}>
+          <Text style={styles.cardTitle}>Head to pickup</Text>
+          <Text style={styles.badge}>${delivery.payout.toFixed(2)}</Text>
+        </View>
+        <Text style={styles.offerPickup}>{delivery.restaurantName}</Text>
+        <Text style={styles.metric}>{delivery.pickup.address || 'No address on file — call the restaurant.'}</Text>
+        <Text style={[styles.statusLine, ready && styles.statusLineReady]}>
+          {ready ? 'Order is ready for pickup' : 'The kitchen is preparing this order'}
+        </Text>
+
+        <View style={{ height: 8 }} />
+        <Text style={styles.cardSubtitle}>Order #{delivery.orderId}</Text>
+        {delivery.items.map((it, idx) => (
+          <Text key={idx} style={styles.itemLine}>
+            {it.quantity} x {it.name}
+          </Text>
+        ))}
+
+        <View style={styles.rowGap}>
+          <TouchableOpacity
+            style={styles.secondaryBtnInline}
+            onPress={() => openDirections(delivery.pickup)}
+            activeOpacity={0.85}
+            disabled={!directionsUrl(delivery.pickup)}
+          >
+            <Text style={styles.secondaryBtnText}>Directions</Text>
+          </TouchableOpacity>
+          {callUrl && (
+            <TouchableOpacity style={styles.secondaryBtnInline} onPress={() => Linking.openURL(callUrl).catch(() => {})} activeOpacity={0.85}>
+              <Text style={styles.secondaryBtnText}>Call store</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <TouchableOpacity style={[styles.primaryBtn, !ready && styles.primaryBtnMuted]} onPress={onPickup} activeOpacity={0.85} disabled={busy}>
+          {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryBtnText}>Confirm pickup</Text>}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.linkBtn} onPress={onRelease} activeOpacity={0.85} disabled={busy}>
+          <Text style={styles.linkBtnText}>Unassign this delivery</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.sheetContent}>
+    <View>
       <View style={styles.rowBetween}>
-        <Text style={styles.cardTitle}>Active delivery</Text>
-        <Text style={styles.badge}>{order.state || order.status}</Text>
-      </View>
-      <Text style={styles.cardSubtitle}>
-        Order #{order.id} • {order.restaurantName}
-      </Text>
-      <Text style={styles.metric}>Total: ${order.total.toFixed(2)}</Text>
-      <View style={{ height: 8 }} />
-      {order.items.slice(0, 4).map((it, idx) => (
-        <Text key={idx} style={styles.itemLine}>
-          • {it}
+        <Text style={styles.cardTitle}>
+          Deliver to {delivery.dropoff.customerName || 'customer'}
         </Text>
-      ))}
-      {order.items.length > 4 && <Text style={styles.cardSubtitle}>+ {order.items.length - 4} more</Text>}
+        <Text style={styles.badge}>${delivery.payout.toFixed(2)}</Text>
+      </View>
+      <Text style={styles.offerPickup}>{delivery.dropoff.address || 'No address provided'}</Text>
+      {!!delivery.dropoff.notes && (
+        <>
+          <View style={{ height: 6 }} />
+          <Text style={styles.cardSubtitle}>Customer note</Text>
+          <Text style={styles.metric}>{delivery.dropoff.notes}</Text>
+        </>
+      )}
+      <Text style={styles.hint}>Picked up from {delivery.restaurantName} · Order #{delivery.orderId}</Text>
 
-      <View style={{ height: 10 }} />
-
-      <Text style={styles.cardSubtitle}>Updated in DriverPortal</Text>
+      <TouchableOpacity
+        style={styles.secondaryBtn}
+        onPress={() => openDirections(delivery.dropoff)}
+        activeOpacity={0.85}
+        disabled={!directionsUrl(delivery.dropoff)}
+      >
+        <Text style={styles.secondaryBtnText}>Directions</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.primaryBtn} onPress={onComplete} activeOpacity={0.85} disabled={busy}>
+        {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.primaryBtnText}>Complete delivery</Text>}
+      </TouchableOpacity>
     </View>
   );
 }
 
 export default function DriverPortal({ onExit }: { onExit: () => void }) {
   const currentUser = useCurrentUser();
-  const orders = useOrders();
-
   const insets = useSafeAreaInsets();
   const bottomNavHeight = 64 + Math.max(10, insets.bottom);
 
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<Page>('onboarding');
-  const [activeDelivery, setActiveDelivery] = useState<DriverActiveDeliveryDto | null>(null);
+  const [approved, setApproved] = useState(false);
+  const [checkingApproval, setCheckingApproval] = useState(false);
   const [online, setOnline] = useState(false);
   const [offers, setOffers] = useState<DriverOfferDto[]>([]);
-  const [activeStep, setActiveStep] = useState<DeliveryStep>('accepted');
+  const [active, setActive] = useState<DriverActiveDeliveryDto | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
   const [mapRegion, setMapRegion] = useState({
-    latitude: 40.7128, // Default to NYC
-    longitude: -74.0060,
+    latitude: 41.885,
+    longitude: -87.7845,
     latitudeDelta: 0.05,
     longitudeDelta: 0.05,
   });
+  const activeRef = useRef<DriverActiveDeliveryDto | null>(null);
+  activeRef.current = active;
 
-  const driverEmail = currentUser?.email ?? 'driver@hobgobbler.app';
+  const driverEmail = currentUser?.email ?? '';
+
+  const refreshState = useCallback(async () => {
+    const state = await DriverActions.getState();
+    setApproved(state.approved);
+    setOnline(state.online);
+    return state;
+  }, []);
 
   // Load driver state
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const state = await DriverActions.getState();
-      if (!mounted) return;
-      setOnline(state.online);
-      setPage((await DriverActions.isOnboarded()) ? 'home' : 'onboarding');
-      if (state.activeDeliveryId) {
-        const active = await DriverActions.getActiveDelivery();
-        if (active) {
-          setActiveDelivery(active);
-          setActiveStep(active.status);
-        }
+      try {
+        await refreshState();
+        const a = await DriverActions.getActiveDelivery().catch(() => null);
+        if (!mounted) return;
+        setActive(a);
+        setPage((await DriverActions.isOnboarded()) ? 'home' : 'onboarding');
+      } finally {
+        if (mounted) setLoading(false);
       }
-      setLoading(false);
     })();
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshState]);
 
-  // Request location permissions and get current location (skip on web)
+  // Driver location for the native map (skip on web)
   useEffect(() => {
     if (page !== 'home' || Platform.OS === 'web') return;
     let mounted = true;
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
+        if (!mounted || status !== 'granted') return;
+        const current = await Location.getCurrentPositionAsync({});
         if (!mounted) return;
-        if (status !== 'granted') {
-          setLocationError('Location permission denied');
-          return;
-        }
-
-        const currentLocation = await Location.getCurrentPositionAsync({});
-        if (!mounted) return;
-        setLocation(currentLocation);
-        setMapRegion({
-          latitude: currentLocation.coords.latitude,
-          longitude: currentLocation.coords.longitude,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        });
+        setLocation(current);
+        setMapRegion((r) => ({ ...r, latitude: current.coords.latitude, longitude: current.coords.longitude }));
       } catch (error) {
-        if (!mounted) return;
-        setLocationError('Failed to get location');
         console.error('Location error:', error);
       }
     })();
@@ -263,88 +343,60 @@ export default function DriverPortal({ onExit }: { onExit: () => void }) {
     };
   }, [page]);
 
-  // Load offers when online
+  const refreshHome = useCallback(async () => {
+    try {
+      const a = await DriverActions.getActiveDelivery();
+      if (activeRef.current && !a) {
+        setNotice({ text: 'That delivery is no longer assigned to you (the order may have been cancelled).', tone: 'info' });
+      }
+      setActive(a);
+      if (!a && online && approved) {
+        setOffers(await DriverActions.getOffers());
+      }
+    } catch (e: any) {
+      setNotice({ text: errorText(e, "Can't reach the server right now."), tone: 'error' });
+    }
+  }, [online, approved]);
+
+  // Poll for offers / active-delivery updates while on Home
   useEffect(() => {
-    if (!online || page !== 'home') return;
-    let mounted = true;
-    (async () => {
-      const data = await DriverActions.getOffers();
-      if (!mounted) return;
-      setOffers(data);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [online, page]);
+    if (page !== 'home' || !approved) return;
+    refreshHome();
+    const t = setInterval(() => {
+      if (AppState.currentState === 'active') refreshHome();
+    }, POLL_MS);
+    return () => clearInterval(t);
+  }, [page, approved, online, refreshHome]);
 
-  const advanceStep = async () => {
-    if (!activeDelivery) return;
-    const id = activeDelivery.id;
-    const next: DriverDeliveryStatus =
-      activeStep === 'accepted' ? 'arrived_pickup' :
-      activeStep === 'arrived_pickup' ? 'picked_up' :
-      activeStep === 'picked_up' ? 'arrived_dropoff' :
-      activeStep === 'arrived_dropoff' ? 'delivered' :
-      'delivered';
-
-    await DriverActions.advanceDelivery(id, next);
-    setActiveStep(next);
-    
-    if (next === 'delivered') {
-      setActiveDelivery(null);
-      setPage('earnings');
-    } else {
-      const updated = await DriverActions.getActiveDelivery();
-      if (updated) setActiveDelivery(updated);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await fn();
+    } catch (e: any) {
+      setNotice({ text: errorText(e, 'Something went wrong. Please try again.'), tone: 'error' });
+      await refreshHome();
+    } finally {
+      setBusy(false);
     }
   };
 
-  const stepTitle: Record<DeliveryStep, string> = {
-    accepted: 'Accepted',
-    arrived_pickup: 'Arrived at pickup',
-    picked_up: 'Picked up',
-    arrived_dropoff: 'Arrived at dropoff',
-    delivered: 'Delivered',
+  const toggleOnline = async () => {
+    const next = !online;
+    if (next) await DriverActions.goOnline();
+    else await DriverActions.goOffline();
+    setOnline(next);
+    if (!next) setOffers([]);
   };
-
-  const primaryLabel: Record<DeliveryStep, string> = {
-    accepted: 'Arrived',
-    arrived_pickup: 'Confirm pickup',
-    picked_up: 'Arrived',
-    arrived_dropoff: 'Complete delivery',
-    delivered: 'Delivered',
-  };
-
-  const showPickupMarker = !!activeDelivery && (activeStep === 'accepted' || activeStep === 'arrived_pickup');
-  const showDropoffMarker = !!activeDelivery && (activeStep === 'picked_up' || activeStep === 'arrived_dropoff');
-
-  // Calculate pickup and dropoff locations (using dummy locations for now)
-  // In production, these would come from the activeDelivery DTO
-  const pickupLocation = activeDelivery
-    ? {
-        latitude: (location?.coords.latitude || 40.7128) + 0.01,
-        longitude: (location?.coords.longitude || -74.0060) + 0.01,
-      }
-    : null;
-  const dropoffLocation = activeDelivery
-    ? {
-        latitude: (location?.coords.latitude || 40.7128) + 0.02,
-        longitude: (location?.coords.longitude || -74.0060) + 0.02,
-      }
-    : null;
 
   const signOut = async () => {
     await DriverActions.signOut();
     onExit();
   };
 
-  const go = (p: Page) => {
-    setPage(p);
-  };
-
   if (loading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
         <ActivityIndicator color="#C9943D" />
       </View>
     );
@@ -362,21 +414,20 @@ export default function DriverPortal({ onExit }: { onExit: () => void }) {
     );
   }
 
+  const pickupCoord = active?.pickup.lat != null && active?.pickup.lng != null
+    ? { latitude: active.pickup.lat, longitude: active.pickup.lng }
+    : null;
+  const dropoffCoord = active?.dropoff.lat != null && active?.dropoff.lng != null
+    ? { latitude: active.dropoff.lat, longitude: active.dropoff.lng }
+    : null;
+
   return (
     <View style={styles.container}>
       <View style={[styles.body, { paddingBottom: bottomNavHeight + 16 }]}>
         {page === 'home' && (
           <View style={styles.homeContainer}>
-            {/* MAP-FIRST: the map fills the entire screen behind all UI */}
-            {Platform.OS === 'web' ? (
-              <View style={styles.mapFullScreen}>
-                <Text style={styles.mapPlaceholderText}>Map (web placeholder)</Text>
-                {locationError && (
-                  <Text style={[styles.mapPlaceholderText, { color: 'rgba(255,100,100,0.8)', marginTop: 8 }]}>
-                    {locationError}
-                  </Text>
-                )}
-              </View>
+            {Platform.OS === 'web' || !MapView ? (
+              <View style={styles.mapFullScreen} />
             ) : (
               <MapView
                 style={styles.mapFullScreen}
@@ -387,161 +438,114 @@ export default function DriverPortal({ onExit }: { onExit: () => void }) {
                 followsUserLocation={false}
                 mapType="standard"
               >
-                {/* Driver location marker */}
                 {location && (
                   <Marker
-                    coordinate={{
-                      latitude: location.coords.latitude,
-                      longitude: location.coords.longitude,
-                    }}
-                    title="Your Location"
+                    coordinate={{ latitude: location.coords.latitude, longitude: location.coords.longitude }}
+                    title="You"
                     pinColor="#C9943D"
                   />
                 )}
-
-                {/* Pickup marker */}
-                {showPickupMarker && pickupLocation && (
-                  <Marker
-                    coordinate={pickupLocation}
-                    title="Pickup"
-                    description={activeDelivery?.restaurantName || 'Restaurant'}
-                    pinColor="#4CAF50"
-                  />
+                {active?.status === 'accepted' && pickupCoord && (
+                  <Marker coordinate={pickupCoord} title="Pickup" description={active.restaurantName} pinColor="#4CAF50" />
                 )}
-
-                {/* Dropoff marker */}
-                {showDropoffMarker && dropoffLocation && (
-                  <Marker
-                    coordinate={dropoffLocation}
-                    title="Dropoff"
-                    description="Delivery address"
-                    pinColor="#FF5722"
-                  />
+                {active?.status === 'picked_up' && dropoffCoord && (
+                  <Marker coordinate={dropoffCoord} title="Drop-off" description={active.dropoff.address ?? ''} pinColor="#FF5722" />
                 )}
               </MapView>
             )}
 
-            {/* Top overlay header */}
             <View style={[styles.homeTopOverlay, { paddingTop: Math.max(12, insets.top) }]}>
               <View>
                 <Text style={styles.homeTitle}>Driver</Text>
-                <Text style={styles.homeSubtitle}>{online ? 'Online' : 'Offline'}</Text>
+                <Text style={styles.homeSubtitle}>
+                  {!approved ? 'Pending approval' : active ? 'On a delivery' : online ? 'Online' : 'Offline'}
+                </Text>
               </View>
-              <TouchableOpacity
-                onPress={async () => {
-                  const next = !online;
-                  if (next) {
-                    await DriverActions.goOnline();
-                  } else {
-                    await DriverActions.goOffline();
-                  }
-                  setOnline(next);
-                }}
-                style={styles.topbarAction}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.topbarActionText}>{online ? 'Go offline' : 'Go online'}</Text>
-              </TouchableOpacity>
+              {approved && !active && (
+                <TouchableOpacity onPress={toggleOnline} style={styles.topbarAction} activeOpacity={0.85}>
+                  <Text style={styles.topbarActionText}>{online ? 'Go offline' : 'Go online'}</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
-            {/* Bottom sheet overlay (offers or active delivery) */}
             <BottomSheet bottomOffset={bottomNavHeight}>
-              {activeDelivery ? (
-                <View style={styles.sheetContent}>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.cardTitle}>{stepTitle[activeStep]}</Text>
-                    <Text style={styles.badge}>Active</Text>
-                  </View>
-
-                  <Text style={styles.cardSubtitle}>
-                    {showPickupMarker ? 'Pickup' : showDropoffMarker ? 'Dropoff' : 'Delivery'}
-                  </Text>
-                  <Text style={styles.metric}>
-                    {showPickupMarker ? activeDelivery.restaurantName : 'Dropoff address (placeholder)'}
-                  </Text>
-
-                  <View style={{ height: 10 }} />
-
-                  {/* Secondary actions */}
-                  <View style={styles.rowGap}>
-                    <TouchableOpacity
-                      style={styles.secondaryBtnInline}
-                      onPress={() => Alert.alert('Navigate', 'Opens navigation (placeholder).')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.secondaryBtnText}>Navigate</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.secondaryBtnInline}
-                      onPress={() => Alert.alert('Contact', 'Call/Text (placeholder).')}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.secondaryBtnText}>Call/Text</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* One primary action to advance */}
-                  {activeStep !== 'delivered' && (
-                    <TouchableOpacity style={styles.primaryBtn} onPress={advanceStep} activeOpacity={0.85}>
-                      <Text style={styles.primaryBtnText}>{primaryLabel[activeStep]}</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+              <Notice text={notice?.text ?? null} tone={notice?.tone ?? 'info'} />
+              {!approved ? (
+                <PendingApproval
+                  checking={checkingApproval}
+                  onRefresh={async () => {
+                    setCheckingApproval(true);
+                    try {
+                      const s = await refreshState();
+                      if (!s.approved) setNotice({ text: 'Still under review. We will let you know once you are approved.', tone: 'info' });
+                    } finally {
+                      setCheckingApproval(false);
+                    }
+                  }}
+                />
+              ) : active ? (
+                <ActiveDeliveryCard
+                  delivery={active}
+                  busy={busy}
+                  onPickup={() =>
+                    run(async () => {
+                      setActive(await DriverActions.confirmPickup(active.id));
+                    })
+                  }
+                  onComplete={() =>
+                    run(async () => {
+                      await DriverActions.completeDelivery(active.id);
+                      setActive(null);
+                      setNotice({ text: `Delivered. $${active.payout.toFixed(2)} added to your earnings.`, tone: 'info' });
+                      setOffers(await DriverActions.getOffers());
+                    })
+                  }
+                  onRelease={() =>
+                    run(async () => {
+                      await DriverActions.releaseDelivery(active.id);
+                      setActive(null);
+                      setOffers(await DriverActions.getOffers());
+                    })
+                  }
+                />
               ) : (
                 <OffersSheet
                   online={online}
                   offers={offers}
-                  onGoOnline={async () => {
-                    await DriverActions.goOnline();
-                    setOnline(true);
-                  }}
-                  onDecline={async (offerId) => {
-                    await DriverActions.declineOffer(offerId);
-                    const updated = await DriverActions.getOffers();
-                    setOffers(updated);
-                  }}
-                  onAccept={async (offerId) => {
-                    const result = await DriverActions.acceptOffer(offerId);
-                    const active = await DriverActions.getActiveDelivery();
-                    if (active) {
-                      setActiveDelivery(active);
-                      setActiveStep(active.status);
-                    }
-                  }}
+                  busy={busy}
+                  onGoOnline={toggleOnline}
+                  onDecline={(offerId) =>
+                    run(async () => {
+                      await DriverActions.declineOffer(offerId);
+                      setOffers((list) => list.filter((o) => o.id !== offerId));
+                    })
+                  }
+                  onAccept={(offerId) =>
+                    run(async () => {
+                      setActive(await DriverActions.acceptOffer(offerId));
+                      setOffers([]);
+                    })
+                  }
                 />
               )}
             </BottomSheet>
           </View>
         )}
 
-        {page === 'earnings' && <DriverEarnings driverEmail={driverEmail} />}
+        {page === 'earnings' && <DriverEarnings />}
 
         {page === 'settings' && (
           <DriverSettings
-            online={online}
-            onToggleOnline={async () => {
-              const next = !online;
-              if (next) {
-                await DriverActions.goOnline();
-              } else {
-                await DriverActions.goOffline();
-              }
-              setOnline(next);
-            }}
             onClearDeclines={async () => {
               await DriverActions.clearDeclinedOffers();
-              Alert.alert('Cleared', 'Declined offers cleared');
             }}
-            onResetOnboarding={async () => {
-              // Reset onboarding would require a new action, for now just go back
-              setPage('onboarding');
-            }}
+            onResetOnboarding={() => setPage('onboarding')}
             onSignOut={signOut}
           />
         )}
       </View>
 
-      <DriverBottomNav current={page} onGo={go} bottomInset={insets.bottom} />
+      <DriverBottomNav current={page} onGo={setPage} bottomInset={insets.bottom} />
     </View>
   );
 }
@@ -583,222 +587,68 @@ function DriverOnboarding({ onComplete, onCancel }: { onComplete: () => void; on
   );
 }
 
-function DriverHome({
-  online,
-  offersCount,
-  activeOrder,
-  onToggleOnline,
-  onGoOffers,
-  onGoActive,
-}: {
-  online: boolean;
-  offersCount: number;
-  activeOrder: Order | null;
-  onToggleOnline: () => void;
-  onGoOffers: () => void;
-  onGoActive: () => void;
-}) {
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-      <View style={styles.card}>
-        <View style={styles.rowBetween}>
-          <View>
-            <Text style={styles.cardTitle}>Home</Text>
-            <Text style={styles.cardSubtitle}>{online ? 'Online' : 'Offline'} • {offersCount} offer(s)</Text>
-          </View>
-          <TouchableOpacity style={styles.smallBtn} onPress={onToggleOnline} activeOpacity={0.85}>
-            <Text style={styles.smallBtnText}>{online ? 'Go offline' : 'Go online'}</Text>
-          </TouchableOpacity>
-        </View>
-        {activeOrder ? (
-          <>
-            <View style={{ height: 12 }} />
-            <Text style={styles.metric}>Active: Order #{activeOrder.id}</Text>
-            <TouchableOpacity style={styles.primaryBtn} onPress={onGoActive} activeOpacity={0.85}>
-              <Text style={styles.primaryBtnText}>Open active</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <Text style={[styles.metric, { marginTop: 12 }]}>No active delivery.</Text>
-        )}
-        <TouchableOpacity style={styles.secondaryBtn} onPress={onGoOffers} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>View offers</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
-  );
-}
+function DriverEarnings() {
+  const [data, setData] = useState<DriverEarningsDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-function DriverOffers({
-  online,
-  offers,
-  onGoOnline,
-  onDecline,
-  onAccept,
-}: {
-  online: boolean;
-  offers: Order[];
-  onGoOnline: () => void;
-  onDecline: (orderId: number) => void;
-  onAccept: (orderId: number) => void;
-}) {
-  if (!online) {
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setData(await DriverActions.getEarnings());
+    } catch (e: any) {
+      setError(errorText(e, "Couldn't load earnings."));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (error) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Offers</Text>
-        <Text style={styles.metric}>You’re offline.</Text>
-        <TouchableOpacity style={styles.primaryBtn} onPress={onGoOnline} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Go online</Text>
+        <Text style={styles.emptyText}>{error}</Text>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={load} activeOpacity={0.85}>
+          <Text style={styles.secondaryBtnText}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
-
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-      {offers.length === 0 ? (
-        <Text style={styles.emptyText}>No offers right now.</Text>
-      ) : (
-        offers
-          .slice()
-          .sort((a, b) => b.id - a.id)
-          .map((o) => (
-            <View key={o.id} style={styles.card}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.cardTitle}>Order #{o.id}</Text>
-                <Text style={styles.badge}>{o.state || o.status}</Text>
-              </View>
-              <Text style={styles.cardSubtitle}>{o.restaurantName}</Text>
-              <Text style={styles.metric}>${o.total.toFixed(2)} • {o.items.length} item(s)</Text>
-
-              <View style={styles.rowGap}>
-                <TouchableOpacity style={styles.secondaryBtnInline} onPress={() => onDecline(o.id)} activeOpacity={0.85}>
-                  <Text style={styles.secondaryBtnText}>Decline</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.primaryBtnInline} onPress={() => onAccept(o.id)} activeOpacity={0.85}>
-                  <Text style={styles.primaryBtnText}>Accept</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))
-      )}
-    </ScrollView>
-  );
-}
-
-function DriverActive({ orderId, driverEmail, onDone }: { orderId: number; driverEmail: string; onDone: () => void }) {
-  const orders = useOrders();
-  const order = orders.find((o) => o.id === orderId);
-  if (!order) return <Text style={styles.emptyText}>Order not found.</Text>;
-  if (order.driverEmail && order.driverEmail !== driverEmail) return <Text style={styles.emptyText}>Assigned to another driver.</Text>;
-
-  const status = (order.state || order.status || '').toLowerCase();
-
-  const transition = (event: string) => {
-    try {
-      StoreActions.updateOrder(orderId, (o) => applyOrderEvent(o, event, { driverEmail }));
-      if (event === OrderEvents.COMPLETE_DELIVERY) onDone();
-    } catch (e: any) {
-      Alert.alert('Invalid transition', e?.message ?? 'Cannot do that now');
-    }
-  };
-
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Active Delivery</Text>
-        <Text style={styles.cardSubtitle}>Order #{order.id} • {order.restaurantName}</Text>
-        <View style={{ height: 10 }} />
-        <Text style={styles.badge}>{order.state || order.status}</Text>
-        <View style={{ height: 10 }} />
-        {order.items.map((it, idx) => (
-          <Text key={idx} style={styles.itemLine}>• {it}</Text>
-        ))}
-        <View style={{ height: 10 }} />
-        <Text style={styles.metric}>Total: ${order.total.toFixed(2)}</Text>
-      </View>
-
-      {status === OrderStates.PICKED_UP && (
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => transition(OrderEvents.START_ROUTE)} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Start route</Text>
-        </TouchableOpacity>
-      )}
-      {status === OrderStates.EN_ROUTE && (
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => transition(OrderEvents.COMPLETE_DELIVERY)} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Mark delivered</Text>
-        </TouchableOpacity>
-      )}
-      {status === OrderStates.DELIVERED && (
-        <Text style={styles.emptyText}>Delivered.</Text>
-      )}
-    </ScrollView>
-  );
-}
-
-function DriverEarnings({ driverEmail }: { driverEmail: string }) {
-  const orders = useOrders();
-  const delivered = orders
-    .filter((o) => o.driverEmail === driverEmail && (o.state || o.status) === OrderStates.DELIVERED)
-    .slice()
-    .sort((a, b) => b.id - a.id);
-
-  const payoutForOrder = (o: Order) => 5 + o.total * 0.1;
-
-  const toDate = (o: Order) => {
-    const raw = (o as any).t_created || (o as any).created_at || null;
-    if (raw) {
-      const d = new Date(raw);
-      if (!isNaN(d.getTime())) return d;
-    }
-    const d2 = new Date((o as any).date || Date.now());
-    return isNaN(d2.getTime()) ? new Date() : d2;
-  };
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-  const todayTotal = delivered
-    .filter((o) => toDate(o) >= startOfToday)
-    .reduce((sum, o) => sum + payoutForOrder(o), 0);
-
-  const weekTotal = delivered
-    .filter((o) => toDate(o) >= weekAgo)
-    .reduce((sum, o) => sum + payoutForOrder(o), 0);
+  if (!data) return <ActivityIndicator color="#C9943D" />;
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Earnings</Text>
-        <Text style={styles.cardSubtitle}>{delivered.length} delivered</Text>
+        <Text style={styles.cardSubtitle}>{data.deliveries.length} delivered</Text>
 
         <View style={{ height: 12 }} />
         <View style={styles.rowGap}>
           <View style={[styles.card, { flex: 1, marginBottom: 0 }]}>
             <Text style={styles.cardSubtitle}>Today</Text>
-            <Text style={styles.earningsValue}>${todayTotal.toFixed(2)}</Text>
+            <Text style={styles.earningsValue}>${data.todayTotal.toFixed(2)}</Text>
           </View>
           <View style={[styles.card, { flex: 1, marginBottom: 0 }]}>
-            <Text style={styles.cardSubtitle}>This week</Text>
-            <Text style={styles.earningsValue}>${weekTotal.toFixed(2)}</Text>
+            <Text style={styles.cardSubtitle}>Last 7 days</Text>
+            <Text style={styles.earningsValue}>${data.weekTotal.toFixed(2)}</Text>
           </View>
         </View>
       </View>
 
-      {delivered.length === 0 ? (
+      {data.deliveries.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.emptyText}>No completed deliveries yet.</Text>
         </View>
       ) : (
-        delivered.map((o) => (
-          <View key={o.id} style={styles.card}>
+        data.deliveries.map((d) => (
+          <View key={d.id} style={styles.card}>
             <View style={styles.rowBetween}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Order #{o.id}</Text>
-                <Text style={styles.cardSubtitle}>{o.restaurantName}</Text>
-                <Text style={styles.cardSubtitle}>{toDate(o).toLocaleString()}</Text>
+                <Text style={styles.cardTitle}>Order #{d.orderId}</Text>
+                <Text style={styles.cardSubtitle}>{d.restaurantName}</Text>
+                {!!d.deliveredAt && <Text style={styles.cardSubtitle}>{new Date(d.deliveredAt).toLocaleString()}</Text>}
               </View>
-              <Text style={styles.earningsPayout}>${payoutForOrder(o).toFixed(2)}</Text>
+              <Text style={styles.earningsPayout}>${d.payout.toFixed(2)}</Text>
             </View>
           </View>
         ))
@@ -808,54 +658,34 @@ function DriverEarnings({ driverEmail }: { driverEmail: string }) {
 }
 
 function DriverSettings({
-  online,
-  onToggleOnline,
   onClearDeclines,
   onResetOnboarding,
   onSignOut,
 }: {
-  online: boolean;
-  onToggleOnline: () => void;
-  onClearDeclines: () => void;
+  onClearDeclines: () => Promise<void>;
   onResetOnboarding: () => void;
   onSignOut: () => void;
 }) {
   const [profile, setProfile] = useState<{ name: string; phone: string; vehicle: string } | null>(null);
-  const [payout, setPayout] = useState<{ method: string } | null>(null);
-  const [supportNote, setSupportNote] = useState('');
+  const [saved, setSaved] = useState<string | null>(null);
   const [showFaq, setShowFaq] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       const p = await safeGetJson('driver.profile', { name: '', phone: '', vehicle: 'car' });
-      const pay = await safeGetJson('driver.payout', { method: '' });
-      const note = await safeGetJson('driver.supportNote', { note: '' });
-      if (!mounted) return;
-      setProfile(p);
-      setPayout(pay);
-      setSupportNote(note?.note ?? '');
+      if (mounted) setProfile(p);
     })();
     return () => {
       mounted = false;
     };
   }, []);
 
-  if (!profile || !payout) return <ActivityIndicator color="#C9943D" />;
+  if (!profile) return <ActivityIndicator color="#C9943D" />;
 
   const saveProfile = async () => {
     await safeSetJson('driver.profile', profile);
-    Alert.alert('Saved', 'Profile saved');
-  };
-
-  const savePayout = async () => {
-    await safeSetJson('driver.payout', payout);
-    Alert.alert('Saved', 'Payout method saved');
-  };
-
-  const saveSupport = async () => {
-    await safeSetJson('driver.supportNote', { note: supportNote });
-    Alert.alert('Saved', 'Support message saved');
+    setSaved('Profile saved');
   };
 
   if (showFaq) {
@@ -864,7 +694,6 @@ function DriverSettings({
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-      {/* Profile */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Profile</Text>
         <Text style={styles.cardSubtitle}>Basic driver info</Text>
@@ -883,22 +712,6 @@ function DriverSettings({
           placeholderTextColor="rgba(255,255,255,0.35)"
           style={styles.input}
         />
-        <View style={styles.rowBetween}>
-          <Text style={styles.metric}>Status</Text>
-          <TouchableOpacity style={styles.smallBtn} onPress={onToggleOnline} activeOpacity={0.85}>
-            <Text style={styles.smallBtnText}>{online ? 'Online' : 'Offline'}</Text>
-          </TouchableOpacity>
-        </View>
-        <TouchableOpacity style={styles.primaryBtn} onPress={saveProfile} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Save Profile</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Vehicle */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Vehicle</Text>
-        <Text style={styles.cardSubtitle}>How you deliver</Text>
-        <View style={{ height: 10 }} />
         <TextInput
           value={profile.vehicle}
           onChangeText={(t) => setProfile((p) => ({ ...(p as any), vehicle: t }))}
@@ -907,86 +720,49 @@ function DriverSettings({
           style={styles.input}
         />
         <TouchableOpacity style={styles.primaryBtn} onPress={saveProfile} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Save Vehicle</Text>
+          <Text style={styles.primaryBtnText}>Save Profile</Text>
         </TouchableOpacity>
+        <Notice text={saved} tone="info" />
       </View>
 
-      {/* Payout Method */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Payout Method</Text>
-        <Text style={styles.cardSubtitle}>Where earnings go</Text>
-        <View style={{ height: 10 }} />
-        <TextInput
-          value={payout.method}
-          onChangeText={(t) => setPayout((p) => ({ ...(p as any), method: t }))}
-          placeholder="e.g. Bank transfer, Venmo, PayPal (placeholder)"
-          placeholderTextColor="rgba(255,255,255,0.35)"
-          style={styles.input}
-        />
-        <TouchableOpacity style={styles.primaryBtn} onPress={savePayout} activeOpacity={0.85}>
-          <Text style={styles.primaryBtnText}>Save Payout</Text>
-        </TouchableOpacity>
+        <Text style={styles.cardTitle}>Payouts</Text>
+        <Text style={styles.metric}>
+          Each delivery's payout is shown before you accept it. Earnings are paid out by the Hobgoblin team; contact
+          support to set up your payout account.
+        </Text>
       </View>
 
-      {/* Support */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Support</Text>
-        <Text style={styles.cardSubtitle}>Get help or leave a note</Text>
-        <View style={{ height: 10 }} />
         <TouchableOpacity style={styles.secondaryBtn} onPress={() => setShowFaq(true)} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>Help & FAQ — what drivers can do</Text>
+          <Text style={styles.secondaryBtnText}>Help & FAQ</Text>
         </TouchableOpacity>
         <View style={{ height: 10 }} />
-        <Text style={styles.itemLine}>• Go online to see offers.</Text>
-        <Text style={styles.itemLine}>• Offers appear when merchants mark orders READY.</Text>
-        <Text style={styles.itemLine}>• This is frontend-only demo data.</Text>
-        <View style={{ height: 10 }} />
-        <TextInput
-          value={supportNote}
-          onChangeText={setSupportNote}
-          placeholder="Message (optional)"
-          placeholderTextColor="rgba(255,255,255,0.35)"
-          style={[styles.input, { minHeight: 88, paddingTop: 12 }]}
-          multiline
-        />
-        <TouchableOpacity style={styles.secondaryBtn} onPress={saveSupport} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>Save message</Text>
-        </TouchableOpacity>
+        <Text style={styles.itemLine}>Go online to see delivery offers.</Text>
+        <Text style={styles.itemLine}>Offers appear as soon as a restaurant accepts an order.</Text>
+        <Text style={styles.itemLine}>Confirm pickup once the restaurant has marked the order ready.</Text>
       </View>
 
-      {/* Sign out */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Sign out</Text>
-        <Text style={styles.cardSubtitle}>Leave driver mode</Text>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>Sign out</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Utilities */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Utilities</Text>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={onClearDeclines} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>Clear declined offers</Text>
+        <TouchableOpacity
+          style={styles.secondaryBtn}
+          onPress={async () => {
+            await onClearDeclines();
+            setSaved('Declined offers will show again');
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.secondaryBtnText}>Show declined offers again</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryBtn} onPress={onResetOnboarding} activeOpacity={0.85}>
-          <Text style={styles.secondaryBtnText}>Reset onboarding</Text>
+          <Text style={styles.secondaryBtnText}>Edit onboarding</Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
-  );
-}
 
-function DriverSupport({ onSignOut }: { onSignOut: () => void }) {
-  return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Support</Text>
-        <Text style={styles.cardSubtitle}>Frontend-only placeholder</Text>
-        <View style={{ height: 8 }} />
-        <Text style={styles.itemLine}>• Go online to see offers.</Text>
-        <Text style={styles.itemLine}>• Offers appear when merchants mark orders READY.</Text>
-        <Text style={styles.itemLine}>• This is local demo data.</Text>
+        <Text style={styles.cardTitle}>Sign out</Text>
         <TouchableOpacity style={styles.secondaryBtn} onPress={onSignOut} activeOpacity={0.85}>
           <Text style={styles.secondaryBtnText}>Sign out</Text>
         </TouchableOpacity>
@@ -997,16 +773,6 @@ function DriverSupport({ onSignOut }: { onSignOut: () => void }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  topbar: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.10)',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  topbarTitle: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  topbarSubtitle: { color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 },
   topbarAction: {
     minHeight: 36,
     paddingHorizontal: 12,
@@ -1024,20 +790,28 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#111', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', borderRadius: 4, padding: 14, marginBottom: 10 },
   cardTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 4 },
   cardSubtitle: { color: 'rgba(255,255,255,0.65)', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },
-  metric: { color: '#fff', fontSize: 12, marginTop: 6 },
+  metric: { color: '#fff', fontSize: 12, marginTop: 6, lineHeight: 18 },
+  hint: { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 8 },
   badge: { color: '#C9943D', fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase' },
   emptyText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, paddingVertical: 16 },
+  emptyTextInline: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  searchingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 16 },
+  statusLine: { color: 'rgba(255,255,255,0.65)', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', marginTop: 10 },
+  statusLineReady: { color: '#7BC67E' },
+  notice: { color: '#C9943D', fontSize: 12, marginBottom: 10, lineHeight: 18 },
+  noticeError: { color: '#FF7A7A' },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   rowGap: { flexDirection: 'row', gap: 8, marginTop: 10 },
   input: { minHeight: 44, borderRadius: 4, backgroundColor: '#000', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', color: '#fff', paddingHorizontal: 12, marginBottom: 10 },
-  primaryBtn: { minHeight: 44, borderRadius: 4, backgroundColor: '#C9943D', alignItems: 'center', justifyContent: 'center', marginTop: 6 },
+  primaryBtn: { minHeight: 44, borderRadius: 4, backgroundColor: '#C9943D', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  primaryBtnMuted: { opacity: 0.6 },
   primaryBtnInline: { flex: 1, minHeight: 44, borderRadius: 4, backgroundColor: '#C9943D', alignItems: 'center', justifyContent: 'center' },
   primaryBtnText: { color: '#000', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', fontWeight: '700' },
   secondaryBtn: { minHeight: 44, borderRadius: 4, backgroundColor: '#111', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
   secondaryBtnInline: { flex: 1, minHeight: 44, borderRadius: 4, backgroundColor: '#111', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   secondaryBtnText: { color: '#C9943D', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase' },
-  smallBtn: { minHeight: 36, paddingHorizontal: 10, borderRadius: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  smallBtnText: { color: '#C9943D', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase' },
+  linkBtn: { minHeight: 36, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
+  linkBtnText: { color: 'rgba(255,255,255,0.55)', fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase' },
   itemLine: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginBottom: 6 },
 
   // Home (map-first) layout
@@ -1045,20 +819,7 @@ const styles = StyleSheet.create({
   mapFullScreen: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#050505',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  mapPlaceholderText: { color: 'rgba(255,255,255,0.55)', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase' },
-  mapMarker: {
-    position: 'absolute',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(10,10,10,0.90)',
-  },
-  mapMarkerText: { color: '#C9943D', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase' },
   homeTopOverlay: {
     position: 'absolute',
     left: 16,
@@ -1081,8 +842,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
     backgroundColor: '#0A0A0A',
     overflow: 'hidden',
-    maxHeight: '62%',
+    maxHeight: '72%',
   },
+  sheetScroll: { flexGrow: 0 },
   sheetHandle: {
     alignSelf: 'center',
     width: 44,
@@ -1106,7 +868,7 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   offerPayout: { color: '#fff', fontSize: 28, fontWeight: '800' },
-  offerPickup: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  offerPickup: { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 4 },
 
   // Bottom nav (DoorDash-like)
   bottomNav: {
@@ -1149,5 +911,3 @@ const styles = StyleSheet.create({
     backgroundColor: '#C9943D',
   },
 });
-
-

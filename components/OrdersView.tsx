@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, Alert, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { safeGetJson, safeSetJson } from '../utils/storage';
 import type { Order, CartItem } from '../state';
 import { StoreActions, useCart, useCurrentUser } from '../src/usecases/store';
 import { Repos } from '../src/usecases/repos';
@@ -10,10 +11,33 @@ interface OrdersViewProps {
   onNavigateToOrder?: (order: Order) => void;
 }
 
+const ORDER_STATE_LABELS: Record<string, string> = {
+  pending: 'Waiting for restaurant',
+  confirmed: 'Accepted',
+  preparing: 'Preparing',
+  ready: 'Ready for pickup',
+  picked_up: 'On the way',
+  delivered: 'Delivered',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+const DELIVERY_KEY = 'checkout.delivery';
+
 export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) {
   const [cartKey, setCartKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryNotes, setDeliveryNotes] = useState('');
+  const [checkoutMessage, setCheckoutMessage] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
+
+  useEffect(() => {
+    safeGetJson(DELIVERY_KEY, { address: '', notes: '' }).then((saved: any) => {
+      setDeliveryAddress(saved?.address ?? '');
+      setDeliveryNotes(saved?.notes ?? '');
+    });
+  }, []);
   
   // Data state
   const [orders, setOrders] = useState<Order[]>([]);
@@ -72,7 +96,14 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
 
   const handleCheckout = async () => {
     if (cart.length === 0) return;
-    
+    setCheckoutMessage(null);
+    const address = deliveryAddress.trim();
+    if (address.length < 5) {
+      setCheckoutMessage({ text: 'Add a delivery address so the driver knows where to bring your order.', tone: 'error' });
+      return;
+    }
+    await safeSetJson(DELIVERY_KEY, { address, notes: deliveryNotes.trim() });
+
     setCheckingOut(true);
     
     try {
@@ -138,6 +169,8 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
           t_created: new Date().toISOString(),
           type: 'food',
           buyerEmail: currentUser?.email || null,
+          deliveryAddress: address,
+          deliveryNotes: deliveryNotes.trim() || null,
         });
         
         newOrders.push(createdOrder);
@@ -151,13 +184,10 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
       StoreActions.clearCart();
       updateCart();
       
-      Alert.alert('Success', 'Order placed successfully!');
+      setCheckoutMessage({ text: 'Order placed. We will update you as the restaurant and driver pick it up.', tone: 'ok' });
     } catch (error: any) {
       console.error('Checkout error:', error);
-      Alert.alert(
-        'Error', 
-        error.message || 'Failed to place order. Please try again.'
-      );
+      setCheckoutMessage({ text: error?.message || 'Failed to place order. Please try again.', tone: 'error' });
     } finally {
       setCheckingOut(false);
     }
@@ -239,10 +269,15 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
           <Text style={styles.orderNumber}>Order #{item.id}</Text>
         </View>
         <View style={styles.orderStatusBadge}>
-          <Text style={styles.orderStatusText}>{item.state || item.status}</Text>
+          <Text style={styles.orderStatusText}>
+            {ORDER_STATE_LABELS[(item.state || item.status || '').toLowerCase()] ?? (item.state || item.status)}
+          </Text>
         </View>
       </View>
       <Text style={styles.orderItems}>{item.items.join(', ')}</Text>
+      {!!item.driverName && (item.state === 'picked_up' || item.state === 'ready' || item.state === 'preparing' || item.state === 'confirmed') && (
+        <Text style={styles.orderDriver}>Driver: {item.driverName}</Text>
+      )}
       <View style={styles.orderFooter}>
         <Text style={styles.orderDate}>{item.date}</Text>
         <Text style={styles.orderTotal}>${item.total.toFixed(2)}</Text>
@@ -266,6 +301,11 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Checkout</Text>
+        {checkoutMessage && (
+          <Text style={[styles.checkoutMessage, checkoutMessage.tone === 'error' && styles.checkoutMessageError]}>
+            {checkoutMessage.text}
+          </Text>
+        )}
         {cart.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyText}>Your cart is empty</Text>
@@ -283,6 +323,22 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
             </View>
             
             <View style={styles.cartFooter}>
+              <Text style={styles.fieldLabel}>Deliver to</Text>
+              <TextInput
+                value={deliveryAddress}
+                onChangeText={setDeliveryAddress}
+                placeholder="Street address, apartment, city"
+                placeholderTextColor="#52525b"
+                style={styles.input}
+                autoComplete="street-address"
+              />
+              <TextInput
+                value={deliveryNotes}
+                onChangeText={setDeliveryNotes}
+                placeholder="Notes for the driver (optional)"
+                placeholderTextColor="#52525b"
+                style={styles.input}
+              />
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.totalAmount}>${total.toFixed(2)}</Text>
@@ -493,6 +549,37 @@ const styles = StyleSheet.create({
   },
   checkoutButtonDisabled: {
     opacity: 0.6,
+  },
+  fieldLabel: {
+    fontSize: 10,
+    color: '#a1a1aa',
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  input: {
+    minHeight: 44,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    backgroundColor: '#18181b',
+    color: '#FFFFFF',
+    paddingHorizontal: 12,
+    fontSize: 14,
+    marginBottom: 10,
+  },
+  checkoutMessage: {
+    fontSize: 12,
+    color: '#C9943D',
+    marginBottom: 12,
+  },
+  checkoutMessageError: {
+    color: '#ef4444',
+  },
+  orderDriver: {
+    fontSize: 12,
+    color: '#C9943D',
+    marginBottom: 12,
   },
   orderSeparator: {
     height: 12,

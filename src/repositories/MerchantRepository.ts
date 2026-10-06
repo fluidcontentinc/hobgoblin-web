@@ -7,7 +7,7 @@ export type ParsedMenuRow = { name: string; price: number | null; description?: 
 export interface MerchantRepository {
   getStore(): Promise<StoreDto>;
   createStore(input: { name: string; cuisine?: string }): Promise<StoreDto>;
-  patchStore(input: Partial<Pick<StoreDto, 'status' | 'name' | 'cuisine' | 'description' | 'notification_email' | 'notification_phone'>>): Promise<StoreDto>;
+  patchStore(input: Partial<Pick<StoreDto, 'status' | 'name' | 'cuisine' | 'description' | 'address' | 'notification_email' | 'notification_phone'>>): Promise<StoreDto>;
   uploadLogo(file: File | Blob | { uri: string; name: string; type: string }): Promise<{ logo_url: string }>;
 
   getHours(): Promise<MerchantHoursDto>;

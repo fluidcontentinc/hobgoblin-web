@@ -29,7 +29,7 @@ export class ApiMerchantRepository implements MerchantRepository {
   }
 
   async patchStore(
-    input: Partial<Pick<StoreDto, 'status' | 'name' | 'cuisine' | 'description' | 'notification_email' | 'notification_phone'>>,
+    input: Partial<Pick<StoreDto, 'status' | 'name' | 'cuisine' | 'description' | 'address' | 'notification_email' | 'notification_phone'>>,
   ): Promise<StoreDto> {
     const data = await api.patch('/merchant/store', input);
     return this.transformStore(data);
@@ -48,6 +48,7 @@ export class ApiMerchantRepository implements MerchantRepository {
       status:             data?.status ?? 'open',
       cuisine:            data?.cuisine ?? null,
       description:        data?.description ?? null,
+      address:            data?.address ?? null,
       logo_url:           resolveAssetUrl(data?.logo_url) || null,
       notification_email: data?.notification_email ?? null,
       notification_phone: data?.notification_phone ?? null,
@@ -159,6 +160,7 @@ export class ApiMerchantRepository implements MerchantRepository {
       buyerEmail: o.buyer?.email ?? o.buyer_email ?? '',
       buyerName:  o.buyer?.name  ?? '',
       status:     o.state ?? o.status ?? 'pending',
+      driverName: o.driver?.name ?? null,
       total:      typeof o.total_cents === 'number' ? o.total_cents / 100 : parseFloat(o.total) || 0,
       createdAt:  o.created_at ?? o.placed_at ?? '',   // matches MerchantOrderDto.createdAt
       items:      Array.isArray(o.items) ? o.items.map(transformMerchantItem) : [],
@@ -250,21 +252,12 @@ export class ApiMerchantRepository implements MerchantRepository {
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 function mapTabToState(tab: MerchantOrdersTab): string | undefined {
-  // Frontend tab names → engine `state` values.
-  // 'new' maps to 'created' (orders waiting for restaurant action).
-  // 'history' maps to 'cancelled' — backend will need multi-state support later;
-  //   for now we fetch cancelled and let history show terminal orders.
+  // Frontend tab names → engine `state` values (the engine accepts a comma-separated list).
   const map: Record<string, string> = {
-    new:        'created',    // ← orders awaiting acceptance
-    preparing:  'preparing',
+    new:        'pending',
+    preparing:  'confirmed,preparing',
     ready:      'ready',
-    history:    'cancelled',  // ← terminal orders; expand to completed,delivered later
-    // legacy aliases kept for safety
-    pending:    'created',
-    confirmed:  'preparing',
-    delivered:  'cancelled',
-    completed:  'cancelled',
-    done:       'cancelled',
+    history:    'picked_up,delivered,completed,cancelled',
   };
   return map[tab as string];
 }

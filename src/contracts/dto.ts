@@ -28,27 +28,48 @@ export interface MerchantOrderDto {
   createdAt: IsoDateTime;
   buyerEmail?: string | null;
   driverEmail?: string | null;
+  driverName?: string | null;
 }
 
+export interface DriverPlaceDto {
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+/** An open delivery job. The customer's address is not shown until the driver accepts. */
 export interface DriverOfferDto {
   id: number;
-  status: DriverDeliveryStatus; // offer_sent/accepted/etc.
+  status: DriverDeliveryStatus;
+  orderId: number | null;
   restaurantName: string;
+  pickup: DriverPlaceDto;
   payout: number;
-  etaMinutes: number;
-  dropoffDistanceMiles: number;
+  itemCount: number;
+  createdAt: IsoDateTime;
 }
 
 export interface DriverActiveDeliveryDto {
   id: number;
   status: DriverDeliveryStatus;
-  restaurantId: number;
+  orderId: number | null;
+  /** Engine order state: confirmed | preparing | ready | picked_up | delivered | cancelled */
+  orderState: string;
   restaurantName: string;
-  items: Array<{ name: string; quantity?: number }>;
+  restaurantPhone: string | null;
+  pickup: DriverPlaceDto;
+  dropoff: DriverPlaceDto & { notes: string | null; customerName: string | null };
+  items: Array<{ name: string; quantity: number }>;
+  payout: number;
   total: number;
   createdAt: IsoDateTime;
-  buyerEmail?: string | null;
-  driverEmail?: string | null;
+}
+
+export interface DriverEarningsDto {
+  approved: boolean;
+  todayTotal: number;
+  weekTotal: number;
+  deliveries: Array<{ id: number; orderId: number; payout: number; deliveredAt: IsoDateTime; restaurantName: string }>;
 }
 
 export interface StoreDto {
@@ -57,6 +78,8 @@ export interface StoreDto {
   name: string;
   cuisine?: string | null;
   description?: string | null;
+  /** Pickup address shown to delivery drivers. */
+  address?: string | null;
   logo_url?: string | null;
   notification_email?: string | null;
   notification_phone?: string | null;

@@ -20,6 +20,7 @@ import { showToast } from '../common/Toast';
 import AdminTopBar, { BreadcrumbItem } from './ui/AdminTopBar';
 import PathMapTab from './PathMapTab';
 import { buildInfo, colors, layout, radii, spacing, type as ty } from './ui/tokens';
+import DriversTab from './DriversTab';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ interface Adventure {
   steps?: Step[];
 }
 
-type AdminTab = 'adventures' | 'transmissions' | 'pathmap' | 'account';
+type AdminTab = 'adventures' | 'transmissions' | 'pathmap' | 'drivers' | 'account';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -171,6 +172,7 @@ function AdminSidebar({
     { key: 'adventures',    label: 'Missions',      glyph: 'M' },
     { key: 'pathmap',       label: 'Path Map',      glyph: 'P' },
     { key: 'transmissions', label: 'Transmissions', glyph: 'T' },
+    { key: 'drivers',       label: 'Drivers',       glyph: 'D' },
   ];
 
   return (
@@ -2039,6 +2041,8 @@ export default function AdminPortal({ onExit }: AdminPortalProps) {
       ? [{ label: 'Transmissions' }]
       : tab === 'pathmap'
       ? [{ label: 'Path Map' }]
+      : tab === 'drivers'
+      ? [{ label: 'Drivers' }]
       : selectedAdventure
         ? [
             { label: 'Missions', onPress: () => setSelectedAdventure(null) },
@@ -2063,6 +2067,7 @@ export default function AdminPortal({ onExit }: AdminPortalProps) {
           )}
           {tab === 'transmissions' && <TransmissionsTab />}
           {tab === 'pathmap' && <PathMapTab />}
+          {tab === 'drivers' && <DriversTab />}
         </View>
       </View>
     </View>

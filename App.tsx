@@ -103,9 +103,7 @@ export default function App() {
           const roleMap: Record<string, RootFlow> = {
             'parent': 'parent',
             'restaurant': 'restaurant',
-            // 'driver' intentionally omitted — driver experience is disabled for
-            // now, so any driver-role session falls through to 'unknown' (logout)
-            // instead of mounting the unbuilt DriverPortal.
+            'driver': 'driver',
             'kid': 'kid',
             'admin': 'admin',
           };
@@ -307,9 +305,7 @@ export default function App() {
                   const roleMap: Record<string, RootFlow> = {
                     'parent': 'parent',
                     'restaurant': 'restaurant',
-                    // 'driver' intentionally omitted — driver experience is disabled for
-            // now, so any driver-role session falls through to 'unknown' (logout)
-            // instead of mounting the unbuilt DriverPortal.
+                    'driver': 'driver',
                     'kid': 'kid',
                     'admin': 'admin',
                   };
@@ -367,9 +363,7 @@ export default function App() {
                 const roleMap: Record<string, RootFlow> = {
                   'parent': 'parent',
                   'restaurant': 'restaurant',
-                  // 'driver' intentionally omitted — driver experience is disabled for
-            // now, so any driver-role session falls through to 'unknown' (logout)
-            // instead of mounting the unbuilt DriverPortal.
+                  'driver': 'driver',
                   'kid': 'kid',
                   'admin': 'admin',
                 };

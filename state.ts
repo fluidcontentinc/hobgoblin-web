@@ -129,6 +129,9 @@ export interface Order {
   type?: string;
   buyerEmail?: string | null;
   driverEmail?: string;
+  driverName?: string | null;
+  deliveryAddress?: string | null;
+  deliveryNotes?: string | null;
 }
 
 export interface Event {
