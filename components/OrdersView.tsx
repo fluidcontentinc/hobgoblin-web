@@ -24,6 +24,13 @@ const ORDER_STATE_LABELS: Record<string, string> = {
 
 const DELIVERY_KEY = 'checkout.delivery';
 
+function formatOrderDate(value: string): string {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) {
   const [cartKey, setCartKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,6 +88,8 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
   // Load orders on mount
   useEffect(() => {
     loadOrders();
+    const timer = setInterval(loadOrders, 15000);
+    return () => clearInterval(timer);
   }, [loadOrders]);
 
   const onRefresh = useCallback(async () => {
@@ -163,6 +172,7 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
           restaurantId: orderData.restaurantId,
           restaurantName: orderData.restaurantName,
           items: itemNames.length > 0 ? itemNames : orderData.items.map(() => 'Item'),
+          lines: orderData.items,
           total: orderData.total,
           state: 'created',
           status: 'created',
@@ -279,7 +289,7 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
         <Text style={styles.orderDriver}>Driver: {item.driverName}</Text>
       )}
       <View style={styles.orderFooter}>
-        <Text style={styles.orderDate}>{item.date}</Text>
+        <Text style={styles.orderDate}>{formatOrderDate(item.date)}</Text>
         <Text style={styles.orderTotal}>${item.total.toFixed(2)}</Text>
       </View>
     </TouchableOpacity>
@@ -382,7 +392,7 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
           </View>
         ) : (
           <FlatList
-            data={orders}
+            data={[...orders].sort((a, b) => b.id - a.id)}
             renderItem={renderOrder}
             keyExtractor={(item) => item.id.toString()}
             scrollEnabled={false}

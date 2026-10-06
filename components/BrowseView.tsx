@@ -263,18 +263,20 @@ export default function BrowseView({ onNavigateToMission, onNavigateToRestaurant
             <Text style={styles.menuItemName}>{item.name}</Text>
             <Text style={styles.menuItemPrice}>${item.price.toFixed(2)}</Text>
           </View>
-          <TouchableOpacity
-            style={[styles.addToCartButton, added && styles.addToCartButtonAdded]}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleAddToCart();
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.addToCartText, added && styles.addToCartTextAdded]}>
-              {added ? 'Added!' : 'Add to Cart'}
-            </Text>
-          </TouchableOpacity>
+          {parentMode && (
+            <TouchableOpacity
+              style={[styles.addToCartButton, added && styles.addToCartButtonAdded]}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleAddToCart();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.addToCartText, added && styles.addToCartTextAdded]}>
+                {added ? 'Added!' : 'Add to Cart'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );

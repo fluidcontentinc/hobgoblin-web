@@ -23,12 +23,13 @@ import HelpFAQView from '../HelpFAQView';
 import PrivacyPolicyView from '../PrivacyPolicyView';
 import TermsView from '../TermsView';
 import BrowseView from '../BrowseView';
-import { useCurrentUser } from '../../src/usecases/store';
+import OrdersView from '../OrdersView';
+import { useCart, useCurrentUser } from '../../src/usecases/store';
 import type { Kid, KidProgress, PendingCompletion, InviteCode } from '../../src/repositories/ParentRepository';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type ParentTab = 'kids' | 'reviews' | 'menu' | 'account';
+type ParentTab = 'kids' | 'reviews' | 'menu' | 'orders' | 'account';
 type Page = 'main' | 'kidDetail';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -100,9 +101,11 @@ interface BottomNavProps {
 
 function ParentBottomNav({ active, reviewCount, onNavigate }: BottomNavProps) {
   const insets = useSafeAreaInsets();
+  const cartCount = useCart().reduce((sum, item) => sum + (item.quantity || 1), 0);
   const tabs: { key: ParentTab; label: string }[] = [
     { key: 'kids', label: 'Kids' },
     { key: 'menu', label: 'Menu' },
+    { key: 'orders', label: 'Orders' },
     { key: 'account', label: 'Account' },
   ];
 
@@ -130,6 +133,16 @@ function ParentBottomNav({ active, reviewCount, onNavigate }: BottomNavProps) {
                 </View>
               )}
               {tab.key === 'menu' && <NavIconMenu color={isActive ? '#C9943D' : 'rgba(255,255,255,0.4)'} />}
+              {tab.key === 'orders' && (
+                <View>
+                  <NavIconOrders color={isActive ? '#C9943D' : 'rgba(255,255,255,0.4)'} />
+                  {cartCount > 0 && (
+                    <View style={s.badge}>
+                      <Text style={s.badgeText}>{cartCount > 99 ? '99+' : cartCount}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
               {tab.key === 'account' && <NavIconAccount color={isActive ? '#C9943D' : 'rgba(255,255,255,0.4)'} />}
             </View>
             <Text style={[s.navLabel, isActive && s.navLabelActive]}>{tab.label}</Text>
@@ -164,6 +177,15 @@ function NavIconAccount({ color }: { color: string }) {
     <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
       <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: color }} />
       <View style={{ width: 18, height: 6, borderRadius: 3, borderWidth: 2, borderColor: color }} />
+    </View>
+  );
+}
+
+function NavIconOrders({ color }: { color: string }) {
+  return (
+    <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 2 }}>
+      <View style={{ width: 8, height: 5, borderTopLeftRadius: 4, borderTopRightRadius: 4, borderWidth: 2, borderBottomWidth: 0, borderColor: color }} />
+      <View style={{ width: 16, height: 13, borderRadius: 2, borderWidth: 2, borderColor: color }} />
     </View>
   );
 }
@@ -1182,6 +1204,7 @@ export default function ParentPortal({ onExit }: ParentPortalProps) {
         )}
         {tab === 'account' && <AccountTab onSignOut={onExit} />}
         {tab === 'menu' && <BrowseView initialTab="menu" parentMode />}
+        {tab === 'orders' && <OrdersView />}
       </View>
 
       <ParentBottomNav

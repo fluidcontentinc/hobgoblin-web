@@ -1,8 +1,10 @@
 import type { Order } from '../../state';
 
+export type OrderLine = { menu_item_id: number; quantity: number };
+
 export interface OrdersRepository {
   list(): Promise<Order[]>;
-  create(order: Omit<Order, 'id' | 'date'>): Promise<Order>;
+  /** `lines` are what the engine bills; `items` are display labels only. */
+  create(order: Omit<Order, 'id' | 'date'> & { lines: OrderLine[] }): Promise<Order>;
   getById(id: number): Promise<Order | null>;
 }
-

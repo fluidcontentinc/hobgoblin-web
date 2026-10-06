@@ -8,9 +8,11 @@ interface MenuItemDetailViewProps {
   menuItem: MenuItem;
   restaurant: Restaurant;
   onBack: () => void;
+  /** Only parents order; kids browse. */
+  canOrder?: boolean;
 }
 
-export default function MenuItemDetailView({ menuItem, restaurant, onBack }: MenuItemDetailViewProps) {
+export default function MenuItemDetailView({ menuItem, restaurant, onBack, canOrder = false }: MenuItemDetailViewProps) {
   const [added, setAdded] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const cart = useCart();
@@ -80,6 +82,9 @@ export default function MenuItemDetailView({ menuItem, restaurant, onBack }: Men
           </Text>
         </View>
 
+        {!canOrder ? (
+          <Text style={styles.description}>Ask a parent to order this for you.</Text>
+        ) : (<>
         <View style={styles.quantityCard}>
           <Text style={styles.sectionTitle}>Quantity</Text>
           <View style={styles.quantityControls}>
@@ -115,6 +120,7 @@ export default function MenuItemDetailView({ menuItem, restaurant, onBack }: Men
             {added ? 'Added to Cart!' : `Add ${quantity} to Cart`}
           </Text>
         </TouchableOpacity>
+        </>)}
       </View>
     </ScrollView>
   );

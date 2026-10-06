@@ -9,9 +9,11 @@ interface RestaurantDetailViewProps {
   onBack: () => void;
   onAddToCart?: (item: MenuItem) => void;
   onNavigateToMenuItem?: (menuItem: MenuItem, restaurant: Restaurant) => void;
+  /** Only parents order; kids and the merchant preview just browse. */
+  canOrder?: boolean;
 }
 
-export default function RestaurantDetailView({ restaurant, onBack, onAddToCart, onNavigateToMenuItem }: RestaurantDetailViewProps) {
+export default function RestaurantDetailView({ restaurant, onBack, onAddToCart, onNavigateToMenuItem, canOrder = false }: RestaurantDetailViewProps) {
   const cart = useCart();
   const renderMenuItem = ({ item }: { item: MenuItem }) => {
     const handleAddToCart = () => {
@@ -51,16 +53,18 @@ export default function RestaurantDetailView({ restaurant, onBack, onAddToCart, 
             <Text style={styles.menuItemName}>{item.name}</Text>
             <Text style={styles.menuItemPrice}>${item.price.toFixed(2)}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.addToCartButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleAddToCart();
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.addToCartText}>Add to Cart</Text>
-          </TouchableOpacity>
+          {canOrder && (
+            <TouchableOpacity
+              style={styles.addToCartButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleAddToCart();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.addToCartText}>Add to Cart</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );

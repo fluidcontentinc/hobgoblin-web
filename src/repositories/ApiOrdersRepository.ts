@@ -1,4 +1,4 @@
-import type { OrdersRepository } from './OrdersRepository';
+import type { OrderLine, OrdersRepository } from './OrdersRepository';
 import type { Order } from '../../state';
 import api from '../api/client';
 
@@ -27,16 +27,9 @@ export class ApiOrdersRepository implements OrdersRepository {
     }
   }
 
-  async create(order: Omit<Order, 'id' | 'date'>): Promise<Order> {
+  async create(order: Omit<Order, 'id' | 'date'> & { lines: OrderLine[] }): Promise<Order> {
     try {
-      // Translate the legacy `items` (with id+name+price) into the
-      // engine's required {menu_item_id, quantity} shape.
-      const items = (order.items ?? []).map((it: any) => ({
-        menu_item_id: it.menuItemId ?? it.menu_item_id ?? it.id,
-        quantity:     it.quantity ?? 1,
-      }));
-
-      const payload: Record<string, any> = { items };
+      const payload: Record<string, any> = { items: order.lines };
       if (order.deliveryAddress) payload.delivery_address = order.deliveryAddress;
       if (order.deliveryNotes) payload.delivery_notes = order.deliveryNotes;
       const data = await api.post('/orders', payload);
