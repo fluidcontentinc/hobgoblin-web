@@ -1,6 +1,7 @@
 import type { RestaurantsRepository } from './RestaurantsRepository';
 import type { Restaurant, MenuItem } from '../../state';
 import api from '../api/client';
+import { resolveAssetUrl } from '../api/config';
 
 /**
  * Marketplace-engine restaurant endpoints (public):
@@ -65,8 +66,9 @@ export class ApiRestaurantsRepository implements RestaurantsRepository {
       notificationPhone: data.notification_phone ?? data.notificationPhone,
       pathStop:          data.path_stop ?? null,
       description:       data.description ?? null,
-      // Engine: `logo_url` accessor; legacy fallback to `logo`.
-      logo:              data.logo_url ?? data.logo ?? null,
+      // Engine: `logo_url` accessor; legacy fallback to `logo`. Rebase onto a
+      // reachable origin so it loads on device/phone, not just the dev browser.
+      logo:              resolveAssetUrl(data.logo_url ?? data.logo) || null,
       status:            data.status ?? 'open',
     };
   }
@@ -80,8 +82,9 @@ export class ApiRestaurantsRepository implements RestaurantsRepository {
       price:        typeof item.price === 'number'
                       ? item.price
                       : (typeof item.price_cents === 'number' ? item.price_cents / 100 : 0),
-      // Engine: `image_url` accessor; legacy fallback.
-      image:        item.image_url ?? item.image ?? '',
+      // Engine: `image_url` accessor; legacy fallback. Rebase onto a reachable
+      // origin so uploaded photos load on device, not just the dev browser.
+      image:        resolveAssetUrl(item.image_url ?? item.image) || '',
       description:  item.description || undefined,
       ingredients:  item.ingredients || undefined,
     }));

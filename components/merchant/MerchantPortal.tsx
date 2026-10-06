@@ -24,8 +24,16 @@ import { showToast } from '../common/Toast';
 import RestaurantDetailView from '../RestaurantDetailView';
 import HelpFAQView from '../HelpFAQView';
 
-/** UX cap for the restaurant description field (the DB column is `text`). */
+/** UX cap for the restaurant (store) description field (the DB column is `text`). */
 const DESCRIPTION_MAX_LENGTH = 500;
+
+/**
+ * UX cap for a single menu item's description. Kept short on purpose — a menu
+ * line should be a quick appetite-whetting blurb (~1-2 short sentences), not a
+ * paragraph. 140 chars ≈ 20-25 words, which reads cleanly on the kid/parent
+ * menu cards without truncation.
+ */
+const MENU_ITEM_DESCRIPTION_MAX = 140;
 
 /**
  * Frontend-only starter template the merchant can edit. The bracketed fields
@@ -155,7 +163,7 @@ export default function MerchantPortal({ onExit }: { onExit: () => void }) {
   const orders = useOrders();
 
   const insets = useSafeAreaInsets();
-  const bottomNavHeight = 64 + Math.max(10, insets.bottom);
+  const bottomNavHeight = 56 + Math.max(10, insets.bottom);
 
   const [storeStatus, setStoreStatus] = useState<StoreStatus>('open');
   const [loading, setLoading] = useState(true);
@@ -310,7 +318,7 @@ export default function MerchantPortal({ onExit }: { onExit: () => void }) {
         )}
       </View>
 
-      <View style={[styles.body, { paddingBottom: bottomNavHeight + 16 }]}>
+      <View style={[styles.body, { paddingBottom: bottomNavHeight + 4 }]}>
         {page === 'orders' && (
           <MerchantOrders
             orders={merchantOrders}
@@ -822,6 +830,7 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<MenuItemDto | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const reload = async () => {
     try {
@@ -960,11 +969,21 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
     return <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator color="#C9943D" /></View>;
   }
 
+  // ─────── Import (paste / CSV · photo) ────────────────────────────────────
+  if (importing) {
+    return (
+      <MenuImport
+        onClose={() => setImporting(false)}
+        onSaved={async () => { setImporting(false); await reload(); }}
+      />
+    );
+  }
+
   // ─────── Form (add / edit) ───────────────────────────────────────────────
   if (form) {
     const previewSrc = form.imagePreview || form.existingImageUrl;
     return (
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{form.id ? 'Edit Item' : 'Add Item'}</Text>
 
@@ -972,7 +991,7 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
              react-native-web applies a min-height:100% on the touchable that
              beats an inline minHeight; a definite-height parent makes that
              100% resolve to a fixed size. */}
-          <View style={{ marginTop: 12, height: 200 }}>
+          <View style={{ marginTop: 12, height: 140 }}>
           <TouchableOpacity
             onPress={pickImage}
             activeOpacity={0.85}
@@ -1041,11 +1060,20 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
           <TextInput
             value={form.description}
             onChangeText={(t) => setForm({ ...form, description: t })}
-            placeholder="What's in it?"
+            placeholder="What's in it? (a line or two)"
             placeholderTextColor="rgba(255,255,255,0.55)"
-            style={[styles.input, { minHeight: 80, paddingTop: 12 }]}
+            style={[styles.input, { minHeight: 72, paddingTop: 12, marginBottom: 4 }]}
             multiline
+            maxLength={MENU_ITEM_DESCRIPTION_MAX}
           />
+          <Text
+            style={[
+              styles.charCount,
+              (form.description ?? '').length >= MENU_ITEM_DESCRIPTION_MAX - 15 && styles.charCountWarn,
+            ]}
+          >
+            {(form.description ?? '').length} / {MENU_ITEM_DESCRIPTION_MAX}
+          </Text>
 
           <TouchableOpacity
             style={[styles.primaryBtn, saving && { opacity: 0.5 }, { marginTop: 20, minHeight: 56 }]}
@@ -1087,6 +1115,14 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
           style={[styles.primaryBtn, { marginTop: 8, minHeight: 56 }]}
         >
           <Text style={styles.primaryBtnText}>+ Add Item</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setImporting(true)}
+          activeOpacity={0.85}
+          style={[styles.secondaryBtn, { marginTop: 10, minHeight: 48 }]}
+        >
+          <Text style={styles.secondaryBtnText}>Import a whole menu</Text>
         </TouchableOpacity>
 
         {items.length === 0 && (
@@ -1194,6 +1230,313 @@ function MerchantMenu({ restaurantId }: { restaurantId: number }) {
     </ScrollView>
   );
 }
+// ─── Menu import (paste / CSV now · photo→AI pending engine endpoint) ───────────
+
+type ParsedRow = { key: string; name: string; price: string; description: string };
+
+/** Pull a price like "9", "9.5", "$9.99" out of a string. */
+const PRICE_RE = /\$?\s*(\d+(?:\.\d{1,2})?)/;
+
+/**
+ * Parse a pasted menu into editable rows. Handles three shapes per line:
+ *   - Tab-separated  (Excel / Sheets paste):  Name \t 9.99 \t Description
+ *   - Comma-separated (CSV):                  Name, 9.99, Description
+ *   - Plain text with a trailing price:       "Cheeseburger - $9.99"
+ * Lines with no detectable price still come through (price left blank for the
+ * owner to fill in the review step).
+ */
+function parseMenuText(raw: string): ParsedRow[] {
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const rows: ParsedRow[] = [];
+
+  lines.forEach((line, i) => {
+    let parts: string[] | null = null;
+    if (line.includes('\t')) parts = line.split('\t');
+    else if (line.includes(',')) parts = line.split(',');
+
+    let name = '';
+    let price = '';
+    let description = '';
+
+    if (parts && parts.length >= 2) {
+      name = (parts[0] ?? '').trim();
+      const m = (parts[1] ?? '').match(PRICE_RE);
+      price = m ? m[1] : '';
+      description = parts.slice(2).join(', ').trim();
+    } else {
+      // No delimiter — peel a trailing price off the end; the rest is the name.
+      const m = line.match(/^(.*?)[\s\-–—:]*\$?\s*(\d+(?:\.\d{1,2})?)\s*$/);
+      if (m && m[1].trim()) {
+        name = m[1].trim().replace(/[\-–—:]+$/, '').trim();
+        price = m[2];
+      } else {
+        name = line;
+      }
+    }
+
+    if (!name) return;
+    rows.push({
+      key: `${i}-${name}`,
+      name,
+      price,
+      description: description.slice(0, MENU_ITEM_DESCRIPTION_MAX),
+    });
+  });
+
+  return rows;
+}
+
+function MenuImport({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [mode, setMode] = useState<'paste' | 'photo'>('paste');
+  const [text, setText] = useState('');
+  const [rows, setRows] = useState<ParsedRow[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  // Photo → vision endpoint → populate the same review list as paste/CSV.
+  const pickAndParse = async () => {
+    let file: any = null;
+    if (Platform.OS === 'web') {
+      file = await new Promise<any>((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = (e: any) => resolve(e.target.files?.[0] ?? null);
+        input.click();
+      });
+    } else {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { showToast('Photo permission required', 'error'); return; }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      file = { uri: asset.uri, name: asset.fileName ?? 'menu.jpg', type: asset.mimeType ?? 'image/jpeg' };
+    }
+    if (!file) return;
+
+    setPhotoBusy(true);
+    try {
+      const parsed = await MerchantActions.importMenuPhoto(file);
+      const mapped: ParsedRow[] = parsed.map((r: any, i: number) => ({
+        key: `photo-${i}-${r.name}`,
+        name: r.name,
+        price: r.price != null ? String(r.price) : '',
+        description: (r.description ?? '').slice(0, MENU_ITEM_DESCRIPTION_MAX),
+      }));
+      if (mapped.length === 0) {
+        showToast('No items found — try a clearer, well-lit photo', 'info');
+      } else {
+        setRows(mapped);
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Couldn't read that photo — try again or use Paste", 'error');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const parse = () => {
+    const parsed = parseMenuText(text);
+    if (parsed.length === 0) {
+      showToast('Nothing to import yet — paste your menu first', 'error');
+      return;
+    }
+    setRows(parsed);
+  };
+
+  const updateRow = (key: string, patch: Partial<ParsedRow>) =>
+    setRows((prev) => (prev ?? []).map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  const removeRow = (key: string) =>
+    setRows((prev) => (prev ?? []).filter((r) => r.key !== key));
+
+  const addAll = async () => {
+    if (!rows || rows.length === 0) return;
+    const valid = rows.filter((r) => r.name.trim() && Number.isFinite(parseFloat(r.price)) && parseFloat(r.price) >= 0);
+    if (valid.length === 0) {
+      showToast('Each item needs a name and a price', 'error');
+      return;
+    }
+
+    setSaving(true);
+    let ok = 0;
+    let failed = 0;
+    for (const r of valid) {
+      try {
+        await MerchantActions.addMenuItem({
+          name: r.name.trim(),
+          price: parseFloat(r.price),
+          description: r.description.trim() || undefined,
+          available: true,
+        } as any);
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setSaving(false);
+
+    if (ok > 0) showToast(`Added ${ok} item${ok === 1 ? '' : 's'}${failed ? ` · ${failed} failed` : ''}`, failed ? 'info' : 'success');
+    else showToast("Couldn't add those items — try again", 'error');
+
+    if (ok > 0) onSaved();
+  };
+
+  // ── Review step ──────────────────────────────────────────────────────────
+  if (rows) {
+    return (
+      <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Review {rows.length} item{rows.length === 1 ? '' : 's'}</Text>
+          <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
+            Fix anything that looks off, remove what you don't want, then add them all.
+          </Text>
+
+          {rows.map((r) => (
+            <View
+              key={r.key}
+              style={{
+                paddingVertical: 12,
+                borderBottomWidth: 1,
+                borderBottomColor: 'rgba(255,255,255,0.08)',
+              }}
+            >
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  value={r.name}
+                  onChangeText={(t) => updateRow(r.key, { name: t })}
+                  placeholder="Item name"
+                  placeholderTextColor="rgba(255,255,255,0.45)"
+                  style={[styles.input, { flex: 1, marginBottom: 8 }]}
+                />
+                <View style={[styles.input, { width: 96, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 0, marginBottom: 8 }]}>
+                  <Text style={{ color: '#fff', fontSize: 16, paddingLeft: 12, paddingRight: 2 }}>$</Text>
+                  <TextInput
+                    value={r.price}
+                    onChangeText={(t) => updateRow(r.key, { price: t.replace(/[^0-9.]/g, '') })}
+                    placeholder="0.00"
+                    placeholderTextColor="rgba(255,255,255,0.45)"
+                    keyboardType="decimal-pad"
+                    style={{ flex: 1, color: '#fff', fontSize: 16, paddingRight: 10, minHeight: 46 }}
+                  />
+                </View>
+              </View>
+              <TextInput
+                value={r.description}
+                onChangeText={(t) => updateRow(r.key, { description: t })}
+                placeholder="Description (optional)"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={[styles.input, { marginBottom: 6 }]}
+                maxLength={MENU_ITEM_DESCRIPTION_MAX}
+                multiline
+              />
+              <TouchableOpacity onPress={() => removeRow(r.key)} activeOpacity={0.8} style={{ alignSelf: 'flex-start', paddingVertical: 4 }}>
+                <Text style={{ color: '#ff8080', fontSize: 13 }}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          <TouchableOpacity
+            onPress={addAll}
+            disabled={saving}
+            activeOpacity={0.85}
+            style={[styles.primaryBtn, saving && { opacity: 0.5 }, { marginTop: 16, minHeight: 56 }]}
+          >
+            {saving ? <ActivityIndicator color="#000" /> : (
+              <Text style={styles.primaryBtnText}>Add {rows.length} item{rows.length === 1 ? '' : 's'} to menu</Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setRows(null)} activeOpacity={0.85} style={[styles.secondaryBtn, { marginTop: 10, minHeight: 48 }]}>
+            <Text style={styles.secondaryBtnText}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  // ── Input step (paste / photo) ───────────────────────────────────────────
+  return (
+    <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Import a menu</Text>
+        <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+          Add lots of items at once instead of one at a time.
+        </Text>
+
+        <View style={styles.ordersTabRow}>
+          <TouchableOpacity
+            style={[styles.ordersTabBtn, mode === 'paste' && styles.ordersTabBtnActive]}
+            onPress={() => setMode('paste')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.ordersTabText, mode === 'paste' && styles.ordersTabTextActive]}>Paste list</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.ordersTabBtn, mode === 'photo' && styles.ordersTabBtnActive]}
+            onPress={() => setMode('photo')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.ordersTabText, mode === 'photo' && styles.ordersTabTextActive]}>From photo</Text>
+          </TouchableOpacity>
+        </View>
+
+        {mode === 'paste' ? (
+          <>
+            <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
+              One item per line. Put the price at the end — a comma or tab before it works too.
+              {'\n'}e.g.  Cheeseburger, 9.99, Angus beef with cheddar
+            </Text>
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              placeholder={'Cheeseburger - 9.99\nFries - 3.50\nMilkshake, 5, Vanilla or chocolate'}
+              placeholderTextColor="rgba(255,255,255,0.4)"
+              style={[styles.input, { minHeight: 160, paddingTop: 12 }]}
+              multiline
+              textAlignVertical="top"
+            />
+            <TouchableOpacity onPress={parse} activeOpacity={0.85} style={[styles.primaryBtn, { marginTop: 12, minHeight: 56 }]}>
+              <Text style={styles.primaryBtnText}>Review items</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <View style={{ paddingVertical: 8 }}>
+            <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+              Take a clear, well-lit photo of your printed menu and we'll read the items in
+              for you to review before saving.
+            </Text>
+            <TouchableOpacity
+              onPress={pickAndParse}
+              disabled={photoBusy}
+              activeOpacity={0.85}
+              style={[styles.primaryBtn, { minHeight: 56, opacity: photoBusy ? 0.6 : 1 }]}
+            >
+              {photoBusy
+                ? <ActivityIndicator color="#000" />
+                : <Text style={styles.primaryBtnText}>Choose a menu photo</Text>}
+            </TouchableOpacity>
+            {photoBusy && (
+              <Text style={[styles.cardSubtitle, { textAlign: 'center', marginTop: 10 }]}>
+                Reading your menu…
+              </Text>
+            )}
+            <TouchableOpacity onPress={() => setMode('paste')} activeOpacity={0.85} style={[styles.secondaryBtn, { marginTop: 10, minHeight: 44 }]}>
+              <Text style={styles.secondaryBtnText}>Or paste a list instead</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={[styles.secondaryBtn, { marginTop: 10, minHeight: 48 }]}>
+          <Text style={styles.secondaryBtnText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+}
+
 /**
  * MerchantHours — day-by-day weekly hours grid (Spec #3).
  *
@@ -1752,11 +2095,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   card: {
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#111',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.10)',
     borderRadius: 4,
-    padding: 16,
+    padding: 14,
     marginBottom: 12,
   },
   cardActive: {
@@ -1764,7 +2107,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
   },

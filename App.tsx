@@ -22,6 +22,7 @@ import BrowseView from './components/BrowseView';
 import InboxView from './components/InboxView';
 import OrdersView from './components/OrdersView';
 import AccountView from './components/AccountView';
+import HomeWorldView from './components/HomeWorldView';
 import MissionDetailView from './components/MissionDetailView';
 import OrderDetailView from './components/OrderDetailView';
 import RestaurantDetailView from './components/RestaurantDetailView';
@@ -48,7 +49,7 @@ import { setErrorHandlerCallbacks } from './src/api/errorHandler';
 import type { ApiError } from './src/api/errors';
 import { isNetworkErrorType, ApiErrorType } from './src/api/errors';
 
-type ViewName = 'home' | 'browse' | 'inbox' | 'orders' | 'account';
+type ViewName = 'home' | 'browse' | 'world' | 'inbox' | 'orders' | 'account';
 type RootFlow = 'enter' | 'login' | 'register' | 'verify-pending' | 'parent' | 'restaurant' | 'driver' | 'kid' | 'kid-claim' | 'admin' | 'unknown';
 
 export default function App() {
@@ -476,6 +477,7 @@ export default function App() {
                       initialTab={browseInitialTab}
                     />
                   )}
+                  {currentView === 'world' && <HomeWorldView />}
                   {currentView === 'inbox' && (
                     <InboxView onUnreadCountChange={setInboxUnread} />
                   )}

@@ -1,17 +1,41 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, Text, PanResponder, Image, ImageBackground, ScrollView, ActivityIndicator, AppState } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { View, StyleSheet, Dimensions, TouchableOpacity, Text, PanResponder, Image, ImageBackground, ScrollView, ActivityIndicator, AppState, Animated, Easing } from 'react-native';
 // @ts-ignore
-import Svg, { Circle, G, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Text as SvgText, Path } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// Animated SVG circle for the "current step" pulse ring.
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 import { AdventureActions } from '../src/usecases/adventure';
-import type { AdventureMapNode, AdventureMap } from '../src/repositories/AdventureRepository';
+import type { AdventureMapNode, AdventureMap, ProofSubmission } from '../src/repositories/AdventureRepository';
 import StepDetailModal from './StepDetailModal';
 import SnackStartModal from './SnackStartModal';
-import type { PathSnack } from '../src/repositories/PathMapRepository';
+import TransmissionOverlay from './TransmissionOverlay';
+import PoiZoomOverlay from './PoiZoomOverlay';
+import { resolveScene } from './poiScenes';
+import type { PathSnack, PathRestaurant } from '../src/repositories/PathMapRepository';
+import SceneOverlay from './SceneOverlay';
+import type { Transmission } from '../state';
 import { Repos } from '../src/usecases';
 import { showToast } from './common/Toast';
+import { useGeoCheckIn } from './useGeoCheckIn';
 
 // Width of an admin-placed snack card on the map; used to center it on its point.
 const SNACK_CARD_WIDTH = 72;
+
+// Street-name labels overlaid on the map. Positions are 0–100 percentages of
+// the map image with a rotation (deg). Ported from the Path of Power prototype
+// (STREETS array). Rendered inside the scaled content so they pan/zoom with it.
+const STREETS: ReadonlyArray<{ name: string; x: number; y: number; rotate: number }> = [
+  { name: 'HARLEM AVE', x: 8, y: 27, rotate: -57 },
+  { name: 'LAKE ST', x: 32, y: 44, rotate: -7 },
+  { name: 'NORTH BLVD', x: 50, y: 58, rotate: -6 },
+  { name: 'SOUTH BLVD', x: 57, y: 63, rotate: -6 },
+  { name: 'PLEASANT ST', x: 23, y: 76, rotate: -7 },
+  { name: 'S OAK PARK AVE', x: 43, y: 83, rotate: -72 },
+  { name: 'DIVISION ST', x: 76, y: 20, rotate: -9 },
+  { name: 'RIDGELAND AVE', x: 72, y: 49, rotate: -72 },
+];
 
 interface HuntMapViewProps {
   onRestaurantPress?: (restaurant: any) => void;
@@ -34,30 +58,49 @@ const MAP_WIDTH = SCREEN_WIDTH;
 // Use full screen height minus just the header, let instructions overlay if needed
 const MAP_HEIGHT = SCREEN_HEIGHT - headerHeight;
 const DEBUG_LOGS = false;
+// Height of the app-level BottomNavigation's CONTENT (icons + labels + border),
+// excluding the home-indicator inset it pads for. The Hunt screen reserves this
+// PLUS the same safe-area pad the nav uses (see render) so the hint bar sits
+// flush on top of the nav with no gap on web or device.
+const BOTTOM_NAV_SPACE = 52;
 
-const ARTBOARD_IMAGE = require('../assets/artboard-1.png');
+// New "Path of Power" map art (4691x2640). Aspect ratio is resolved at
+// runtime via Image.resolveAssetSource, so pan/zoom bounds adapt automatically.
+const ARTBOARD_IMAGE = require('../assets/map.png');
 const PATH_OF_POWER_IMAGE = require('../assets/path-of-power.png');
 
 // Define node positions - 12 nodes matching reference: zigzag from top-left to bottom-right
 // Reference pattern: starts upper-left, alternates left-right, ends with 3 horizontal at bottom
 export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel }: HuntMapViewProps) {
+  const insets = useSafeAreaInsets();
   const isParentView = Array.isArray(parentNodes);
   const [activeAdventure, setActiveAdventure] = useState<any>(null);
   const [adventureMap, setAdventureMap] = useState<AdventureMap | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<AdventureMapNode | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  // Full-screen spooky POI close-up shown when tapping a node that has scene art.
+  const [poiVisible, setPoiVisible] = useState(false);
+  // Transmission surfaced after an automatic GPS check-in (reuses the same
+  // overlay the photo-proof flow uses).
+  const [arrivedTransmission, setArrivedTransmission] = useState<Transmission | null>(null);
+  const [showArrivedTransmission, setShowArrivedTransmission] = useState(false);
   // Admin-controlled snack placements (Path to Power). Replaces the old
   // per-restaurant pathStop cards.
   const [pathSnacks, setPathSnacks] = useState<PathSnack[]>([]);
   const [selectedSnack, setSelectedSnack] = useState<PathSnack | null>(null);
   const [snackModalVisible, setSnackModalVisible] = useState(false);
+  // Always-on restaurant POIs (permanent fixtures, mission-independent).
+  const [restaurants, setRestaurants] = useState<PathRestaurant[]>([]);
+  // The restaurant whose close-up scene is open (rendered via SceneOverlay).
+  const [restaurantScene, setRestaurantScene] = useState<AdventureMapNode | null>(null);
   const [imageDimensions, setImageDimensions] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
   // Actual visible viewport for the map area (measured). Using MAP_HEIGHT was causing bad bounds.
   const [viewport, setViewport] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
-  // Space at the bottom that is visually covered by the instructions bar + bottom nav.
-  // This lets the user scroll until content clears those overlays.
-  const bottomOverlayHeight = 50;
+  // The map fills its container exactly — the hint bar and bottom nav now live
+  // in normal layout flow below it (see render), so no scroll-clearance band is
+  // needed here. Kept at 0 so the pinch/zoom centre math uses the full viewport.
+  const bottomOverlayHeight = 0;
   const originalImageSize = useRef<{ width: number; height: number } | null>(null);
 
   // 2D scroll (Menu-style) + zoom (Google Maps style)
@@ -82,6 +125,7 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
     if (isParentView) {
       setAdventureMap({ id: 0, adventureId: 0, nodes: parentNodes ?? [], edges: [] });
       setPathSnacks([]);
+      setRestaurants([]);
       setLoading(false);
       return;
     }
@@ -91,10 +135,11 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
         setLoading(true);
         const [adventure, pathMap] = await Promise.all([
           AdventureActions.loadActiveAdventure(),
-          Repos.pathMap.get().catch(() => ({ snacks: [], updatedAt: '' })),
+          Repos.pathMap.get().catch(() => ({ snacks: [], restaurants: [], updatedAt: '' })),
         ]);
 
         setPathSnacks(pathMap.snacks ?? []);
+        setRestaurants((pathMap as any).restaurants ?? []);
 
         if (adventure) {
           setActiveAdventure(adventure);
@@ -173,11 +218,32 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
     const containerWidth = viewport.width || MAP_WIDTH;
     const containerHeight = viewport.height || MAP_HEIGHT;
 
-    const scaledWidth = containerWidth;
-    const scaledHeight = containerWidth / imageAspectRatio;
+    // "Cover" the viewport: the new Path of Power map is landscape (16:9), so
+    // fitting to height fills the screen vertically and pans horizontally.
+    // (Falls back to fit-to-width for portrait art.) min-zoom-1 keeps the
+    // covered dimension fully visible.
+    const coverByHeight = containerHeight * imageAspectRatio >= containerWidth;
+    const scaledWidth = coverByHeight ? containerHeight * imageAspectRatio : containerWidth;
+    const scaledHeight = coverByHeight ? containerHeight : containerWidth / imageAspectRatio;
 
     setImageDimensions({ width: scaledWidth, height: scaledHeight });
   }, [viewport.width, viewport.height]);
+
+  // Center the (wider-than-screen) landscape map horizontally once, on first
+  // layout, so it doesn't open biased to the left edge. Only runs at fit zoom.
+  const didCenterRef = useRef(false);
+  useEffect(() => {
+    if (didCenterRef.current) return;
+    if (zoomRef.current !== 1) return;
+    const overflowX = imageDimensions.width - (viewport.width || 0);
+    if (overflowX <= 1) return;
+    const centerX = overflowX / 2;
+    didCenterRef.current = true;
+    requestAnimationFrame(() => {
+      horizontalRef.current?.scrollTo({ x: centerX, animated: false });
+      scrollOffset.current.x = centerX;
+    });
+  }, [imageDimensions.width, viewport.width]);
 
   const applyZoom = useCallback((nextZoom: number) => {
     const minZoom = 1;
@@ -298,6 +364,29 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
   // The active mission's colour drives the step-node styling.
   const missionColor = (activeAdventure as any)?.color ?? '#C9943D';
 
+  // The "current" step is the available node with the lowest sequence — it
+  // gets a pulsing ring so the kid knows where to go next.
+  const currentNodeId = useMemo(() => {
+    const available = visibleNodes.filter((n) => n.status === 'available');
+    if (available.length === 0) return null;
+    return available.reduce((a, b) => (a.sequence <= b.sequence ? a : b)).id;
+  }, [visibleNodes]);
+
+  // Looping pulse driver for the current node ring.
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 1600,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
   // Parent mode: the node the kid is actually "at" — pending/rejected first
   // (submitted work is still where they are), else the first available step.
   const hereNode = isParentView
@@ -306,10 +395,27 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
     : null;
 
   const handleNodePress = (node: AdventureMapNode) => {
-    if (visibleNodeIds.has(node.id)) {
-      setSelectedNode(node);
+    if (!visibleNodeIds.has(node.id)) return;
+    setSelectedNode(node);
+    // Tapping a node opens its spooky close-up scene when one exists; the
+    // overlay links through to the step details (proof/gps). Nodes without
+    // scene art open the step detail modal directly (legacy behaviour).
+    if (resolveScene(node.title)) {
+      setPoiVisible(true);
+    } else {
       setModalVisible(true);
     }
+  };
+
+  const handleClosePoi = () => {
+    setPoiVisible(false);
+    setSelectedNode(null);
+  };
+
+  const handleOpenDetailsFromPoi = (node: AdventureMapNode) => {
+    setPoiVisible(false);
+    setSelectedNode(node);
+    setModalVisible(true);
   };
 
   const handleProofSubmitted = async () => {
@@ -325,9 +431,59 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
     setSelectedNode(null);
   };
 
+  // Automatic GPS check-in: when the kid physically enters a gps step's
+  // radius, the step auto-completes. Surface an "arrived" confirmation,
+  // refresh the map, and play any returned transmission. Disabled in
+  // parent/read-only mode.
+  const handleArrived = useCallback(
+    async (node: AdventureMapNode, result: ProofSubmission) => {
+      showToast(`You've arrived at ${node.title}!`, 'success');
+      if (activeAdventure?.id) {
+        try {
+          const refreshedMap = await AdventureActions.refreshMap(activeAdventure.id);
+          setAdventureMap(refreshedMap);
+        } catch {
+          // non-critical — keep existing map on a failed refresh
+        }
+      }
+      if (result.transmission) {
+        setArrivedTransmission(result.transmission as Transmission);
+        setShowArrivedTransmission(true);
+      }
+    },
+    [activeAdventure?.id],
+  );
+
+  const { watching: locationActive } = useGeoCheckIn({
+    nodes: visibleNodes,
+    // Only watch (and prompt for location) when there's actually a GPS stop —
+    // avoids a location permission prompt on hunts with no geofenced steps.
+    enabled: !isParentView && visibleNodes.some((n) => n.requirementType === 'gps'),
+    onArrived: handleArrived,
+  });
+
+  const handleDismissArrivedTransmission = () => {
+    setShowArrivedTransmission(false);
+    if (arrivedTransmission) {
+      setArrivedTransmission({ ...arrivedTransmission, acknowledged: true });
+    }
+  };
+
   const handleSnackPress = (snack: PathSnack) => {
     setSelectedSnack(snack);
     setSnackModalVisible(true);
+  };
+
+  // Tap a restaurant POI → open its close-up scene. SceneOverlay reads the
+  // image off node.transmission.payload.url, so we adapt the restaurant into
+  // that shape (negative id avoids colliding with real step node ids).
+  const handleRestaurantPress = (rest: PathRestaurant) => {
+    setRestaurantScene({
+      id: -rest.id,
+      title: rest.name,
+      type: 'restaurant',
+      transmission: { payload: { url: rest.sceneUrl } },
+    } as unknown as AdventureMapNode);
   };
 
   const handleCloseSnackModal = () => {
@@ -368,10 +524,13 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
   const handleFitToView = () => {
     zoomRef.current = 1;
     setZoom(1);
+    // At fit zoom the landscape map is wider than the viewport — center it
+    // horizontally so "Fit" frames the middle of the map rather than the edge.
+    const centerX = Math.max(0, (imageDimensions.width - viewport.width) / 2);
     requestAnimationFrame(() => {
-      horizontalRef.current?.scrollTo({ x: 0, animated: true });
+      horizontalRef.current?.scrollTo({ x: centerX, animated: true });
       verticalRef.current?.scrollTo({ y: 0, animated: true });
-      scrollOffset.current = { x: 0, y: 0 };
+      scrollOffset.current = { x: centerX, y: 0 };
     });
   };
 
@@ -384,9 +543,10 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
     );
   }
 
-  // Render the map whenever there's an adventure OR admin-placed snacks, so kids
-  // can browse snacks and start an adventure straight from the Path of Power.
-  if (!adventureMap && pathSnacks.length === 0) {
+  // Render the map whenever there's an adventure OR admin-placed snacks OR
+  // always-on restaurants, so kids can browse the Path of Power even with no
+  // active mission.
+  if (!adventureMap && pathSnacks.length === 0 && restaurants.length === 0) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
         <Text style={styles.loadingText}>No active mission found</Text>
@@ -421,7 +581,7 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
         <ScrollView
           ref={(r) => { horizontalRef.current = r; }}
           horizontal
-          scrollEnabled={!isPinching && zoom > 1.01}
+          scrollEnabled={!isPinching}
           bounces={false}
           overScrollMode="never"
           showsHorizontalScrollIndicator={false}
@@ -464,26 +624,76 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
                   <View style={styles.vintageOverlay} />
                 </ImageBackground>
 
+                {/* Street-name labels — scale with the map since they live
+                    inside the same transformed content View. */}
+                {STREETS.map((street) => (
+                  <Text
+                    key={street.name}
+                    style={[
+                      styles.streetLabel,
+                      {
+                        left: (street.x / 100) * imageDimensions.width,
+                        top: (street.y / 100) * imageDimensions.height,
+                        transform: [
+                          { translateX: -60 },
+                          { rotate: `${street.rotate}deg` },
+                        ],
+                      },
+                    ]}
+                    numberOfLines={1}
+                    pointerEvents="none"
+                  >
+                    {street.name}
+                  </Text>
+                ))}
+
                 <Svg width={imageDimensions.width} height={imageDimensions.height} style={styles.svg}>
                   {/* No connecting line is drawn between step nodes — the
                       parchment background art already shows the winding path.
                       Only the numbered step nodes are overlaid here. */}
                   {visibleNodes.map((node) => {
                     const isSelected = selectedNode?.id === node.id;
-                    const isCompleted = node.status === 'completed';
-                    const isPending = node.status === 'pending';
-                    // Step nodes: numbered circles in the mission's colour. Snacks
-                    // (rendered below as food thumbnail chips) stay visually distinct.
-                    const fillColor = isCompleted ? '#10b981' : isPending ? '#f59e0b' : isSelected ? missionColor : '#000000';
-                    const strokeColor = isCompleted ? '#10b981' : isPending ? '#f59e0b' : missionColor;
+                    const isCurrent = node.id === currentNodeId;
+                    // Status-driven palette (Path of Power design):
+                    //   completed = green, pending = amber, rejected = red,
+                    //   available = gold, locked = dark fill with gold outline.
+                    const GOLD = missionColor;
+                    let fillColor: string;
+                    let strokeColor: string;
+                    switch (node.status) {
+                      case 'completed':
+                        fillColor = '#10b981'; strokeColor = '#10b981'; break;
+                      case 'pending':
+                        fillColor = '#f59e0b'; strokeColor = '#f59e0b'; break;
+                      case 'rejected':
+                        fillColor = '#ef4444'; strokeColor = '#ef4444'; break;
+                      case 'locked':
+                        fillColor = '#0a0a0a'; strokeColor = GOLD; break;
+                      case 'available':
+                      default:
+                        fillColor = GOLD; strokeColor = GOLD; break;
+                    }
                     // Use percentage coords scaled to actual image dimensions so
                     // nodes land correctly on every device size.
                     const cx = node.xPct * imageDimensions.width;
                     const cy = node.yPct * imageDimensions.height;
                     const r = isSelected ? 18 : 15;
+                    const lockedTextOpacity = node.status === 'locked' ? 0.5 : 1;
 
                     return (
                       <G key={node.id}>
+                        {/* Pulsing ring marks the current (next) step. */}
+                        {isCurrent && (
+                          <AnimatedCircle
+                            cx={cx}
+                            cy={cy}
+                            r={pulse.interpolate({ inputRange: [0, 1], outputRange: [r, r + 16] })}
+                            fill="none"
+                            stroke={GOLD}
+                            strokeWidth={2}
+                            opacity={pulse.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] })}
+                          />
+                        )}
                         <Circle
                           cx={cx}
                           cy={cy}
@@ -493,19 +703,65 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
                           strokeWidth={isSelected ? 3 : 2}
                           onPress={() => handleNodePress(node)}
                         />
-                        <SvgText
-                          x={cx}
-                          y={cy}
-                          fontSize={13}
-                          fontWeight="700"
-                          fill="#FFFFFF"
-                          textAnchor="middle"
-                          alignmentBaseline="central"
-                          dy={1}
-                          onPress={() => handleNodePress(node)}
-                        >
-                          {node.sequence}
-                        </SvgText>
+                        {node.type === 'restaurant' ? (
+                          // Restaurants read as food stops: a fork glyph instead of
+                          // a number (matches the HTML gold-fork markers).
+                          <Path
+                            d={`M${cx - 3} ${cy - 6}V${cy - 1}M${cx} ${cy - 6}V${cy - 1}M${cx + 3} ${cy - 6}V${cy - 1}M${cx - 3} ${cy - 1}H${cx + 3}M${cx} ${cy - 1}V${cy + 7}`}
+                            stroke="#FFFFFF"
+                            strokeWidth={1.6}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                            opacity={lockedTextOpacity}
+                            onPress={() => handleNodePress(node)}
+                          />
+                        ) : (
+                          <SvgText
+                            x={cx}
+                            y={cy}
+                            fontSize={13}
+                            fontWeight="700"
+                            fill="#FFFFFF"
+                            opacity={lockedTextOpacity}
+                            textAnchor="middle"
+                            alignmentBaseline="central"
+                            dy={1}
+                            onPress={() => handleNodePress(node)}
+                          >
+                            {node.sequence}
+                          </SvgText>
+                        )}
+                      </G>
+                    );
+                  })}
+
+                  {/* Always-on restaurant POIs — permanent fixtures, shown for
+                      every kid regardless of mission. Gold fork markers; tap
+                      opens the restaurant's close-up scene. */}
+                  {restaurants.map((rest) => {
+                    const cx = rest.xPct * imageDimensions.width;
+                    const cy = rest.yPct * imageDimensions.height;
+                    return (
+                      <G key={`rest-${rest.id}`}>
+                        <Circle
+                          cx={cx}
+                          cy={cy}
+                          r={15}
+                          fill="#C9943D"
+                          stroke="#f0d9a8"
+                          strokeWidth={2}
+                          onPress={() => handleRestaurantPress(rest)}
+                        />
+                        <Path
+                          d={`M${cx - 3} ${cy - 6}V${cy - 1}M${cx} ${cy - 6}V${cy - 1}M${cx + 3} ${cy - 6}V${cy - 1}M${cx - 3} ${cy - 1}H${cx + 3}M${cx} ${cy - 1}V${cy + 7}`}
+                          stroke="#FFFFFF"
+                          strokeWidth={1.6}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                          onPress={() => handleRestaurantPress(rest)}
+                        />
                       </G>
                     );
                   })}
@@ -571,8 +827,8 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
                       {snack.image ? (
                         <Image source={{ uri: snack.image }} style={styles.cardFoodImage} resizeMode="cover" />
                       ) : (
-                        <View style={[styles.cardFoodImage, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
-                          <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontWeight: '700' }}>IMG</Text>
+                        <View style={[styles.cardFoodImage, { backgroundColor: '#C9943D', justifyContent: 'center', alignItems: 'center' }]}>
+                          <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.45)', fontWeight: '700' }}>IMG</Text>
                         </View>
                       )}
                       {!!snack.label && (
@@ -588,6 +844,15 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
           </ScrollView>
         </ScrollView>
       </View>
+
+      {/* Location-active indicator — always visible while the foreground
+          geofence watcher is running, so it's clear when location is sensed. */}
+      {locationActive && (
+        <View style={styles.locationChip} pointerEvents="none">
+          <View style={styles.locationDot} />
+          <Text style={styles.locationChipText}>Location on</Text>
+        </View>
+      )}
 
       {/* Zoom Controls */}
       <View style={styles.zoomControls}>
@@ -614,7 +879,8 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
         </TouchableOpacity>
       </View>
 
-      {/* Instructions */}
+      {/* Instructions — in normal flow directly beneath the map so there's no
+          dead gap between the map and the hint bar. */}
       <View style={styles.instructions}>
         <Text style={styles.instructionsText}>
           {isParentView
@@ -622,6 +888,14 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
             : 'Drag to explore • Pinch to zoom • Tap nodes to view step details'}
         </Text>
       </View>
+
+      {/* Reserve the bottom-nav footprint (incl. the home-indicator inset the nav
+          now pads for) so the hint bar sits flush on top of the app-level
+          BottomNavigation (which floats absolutely over this). */}
+      <View style={[styles.bottomNavSpacer, { height: BOTTOM_NAV_SPACE + Math.max(insets.bottom, 8) }]} pointerEvents="none" />
+
+      {/* Restaurant close-up scene (pan-able full-screen image). */}
+      <SceneOverlay node={restaurantScene} onClose={() => setRestaurantScene(null)} />
 
       {/* Step Detail Modal */}
       <StepDetailModal
@@ -642,6 +916,21 @@ export default function HuntMapView({ onRestaurantPress, parentNodes, hereLabel 
         }
         onStart={handleStartAdventure}
         onClose={handleCloseSnackModal}
+      />
+
+      {/* Transmission played after an automatic GPS arrival. */}
+      <TransmissionOverlay
+        transmission={arrivedTransmission}
+        visible={showArrivedTransmission}
+        onDismiss={handleDismissArrivedTransmission}
+      />
+
+      {/* Spooky POI close-up (pan-able scene art). */}
+      <PoiZoomOverlay
+        visible={poiVisible}
+        node={selectedNode}
+        onClose={handleClosePoi}
+        onOpenDetails={handleOpenDetailsFromPoi}
       />
     </View>
   );
@@ -673,16 +962,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#C9943D',
     textTransform: 'uppercase',
-    letterSpacing: 3,
+    letterSpacing: 1,
     textAlign: 'center',
   },
   mapContainer: {
+    // Fills all the space between the title header and the hint bar. The hint
+    // bar + nav spacer below it are in normal flow, so the map ends flush with
+    // the hint bar — no magic bottom margin needed.
     flex: 1,
     overflow: 'hidden',
     backgroundColor: '#000000',
     position: 'relative',
     width: '100%',
-    height: '100%',
   },
   mapWrapper: {
     width: MAP_WIDTH,
@@ -707,9 +998,20 @@ const styles = StyleSheet.create({
     left: 0,
     zIndex: 2,
   },
+  streetLabel: {
+    position: 'absolute',
+    width: 120,
+    textAlign: 'center',
+    color: 'rgba(231,224,209,0.55)',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    zIndex: 1,
+  },
   restaurantCard: {
     width: 72,
-    backgroundColor: '#000000',
+    backgroundColor: '#C9943D',
     borderRadius: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -734,37 +1036,65 @@ const styles = StyleSheet.create({
   },
   cardRestaurantName: {
     fontSize: 10,
-    fontWeight: '600',
-    color: '#C9943D',
+    fontWeight: '700',
+    color: '#000000',
     padding: 4,
     paddingBottom: 3,
     textAlign: 'center',
-    backgroundColor: '#000000',
+    backgroundColor: 'transparent',
   },
   cardFoodImage: {
     width: '100%',
     height: 50,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: '#C9943D',
   },
   instructions: {
-    padding: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     backgroundColor: '#000000',
     borderTopWidth: 1,
     borderTopColor: '#3f3f46',
     borderBottomWidth: 1,
     borderBottomColor: '#3f3f46',
-    position: 'absolute',
-    // BottomNavigation is position:absolute bottom:6, height ~68px.
-    // Add 8px breathing room → 6 + 68 + 8 = 82.
-    bottom: 82,
-    left: 0,
-    right: 0,
-    zIndex: 25,
+  },
+  // Matches the BottomNavigation footprint so the hint bar lands directly on
+  // top of the nav rather than leaving a gap above it.
+  bottomNavSpacer: {
+    height: BOTTOM_NAV_SPACE,
+    backgroundColor: '#000000',
   },
   instructionsText: {
     fontSize: 12,
     color: '#a1a1aa',
     textAlign: 'center',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  locationChip: {
+    position: 'absolute',
+    left: 16,
+    top: 80,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    zIndex: 100,
+  },
+  locationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#C9943D',
+  },
+  locationChipText: {
+    fontSize: 11,
+    color: '#C9943D',
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 1,
   },

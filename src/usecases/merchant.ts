@@ -62,6 +62,11 @@ export const MerchantActions = {
     return await Repos.merchant.getMenu();
   },
 
+  /** Photo → vision endpoint → candidate rows for the import review screen. */
+  async importMenuPhoto(file: any) {
+    return await Repos.merchant.importMenuPhoto(file);
+  },
+
   async addMenuItem(input: Omit<MenuItemDto, 'id'> & { image?: File | Blob | null }): Promise<MenuItemDto> {
     return await Repos.merchant.postMenuItem(input);
   },

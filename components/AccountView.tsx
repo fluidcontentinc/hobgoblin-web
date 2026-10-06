@@ -844,7 +844,7 @@ const styles = StyleSheet.create({
   },
   dashboard: {
     paddingHorizontal: 16,
-    gap: 16,
+    gap: 12,
   },
   userCard: {
     backgroundColor: '#111',
@@ -855,7 +855,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 0,
   },
   userInfo: {
     flex: 1,
@@ -1124,7 +1124,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.10)',
     borderRadius: 4,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 0,
   },
   settingsCardTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 4 },
   settingsCardSubtitle: { color: 'rgba(255,255,255,0.65)', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },

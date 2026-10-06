@@ -38,8 +38,25 @@ export interface PathSnack {
   yPct: number;
 }
 
+/**
+ * An always-on restaurant POI: a permanent fixture on the map (shown unless the
+ * restaurant is paused/closed), independent of any mission. Tapping it opens
+ * the restaurant's spooky close-up scene (`sceneUrl`).
+ */
+export interface PathRestaurant {
+  id: number;
+  name: string;
+  xPct: number;
+  yPct: number;
+  /** Close-up scene image, or null if the admin hasn't uploaded one yet. */
+  sceneUrl: string | null;
+  logoUrl: string | null;
+}
+
 export interface PathMap {
   snacks: PathSnack[];
+  /** Permanent restaurant POIs (open + placed). */
+  restaurants: PathRestaurant[];
   updatedAt: string;
 }
 
@@ -48,4 +65,4 @@ export interface PathMapRepository {
   save(map: PathMap): Promise<PathMap>;
 }
 
-export const EMPTY_PATH_MAP: PathMap = { snacks: [], updatedAt: '' };
+export const EMPTY_PATH_MAP: PathMap = { snacks: [], restaurants: [], updatedAt: '' };

@@ -21,9 +21,9 @@ import type { Restaurant } from '../../state';
 import { showToast } from '../common/Toast';
 import { colors, radii, spacing, type as ty } from './ui/tokens';
 
-const ARTBOARD_IMAGE = require('../../assets/artboard-1.png');
+const ARTBOARD_IMAGE = require('../../assets/map.png');
 const PATH_OF_POWER_IMAGE = require('../../assets/path-of-power.png');
-const ARTBOARD_ASPECT = 1125 / 2436;
+const ARTBOARD_ASPECT = 4691 / 2640; // new wide Oak Park map (landscape) — matches the kid map
 const BANNER_HEIGHT = 52;
 const SNACK_SIZE = 52;
 const NODE_SIZE = 34;
@@ -212,6 +212,69 @@ function DraggableMissionNode({
   );
 }
 
+// ── DraggableRestaurant (always-on POI) ──────────────────────────────────────
+
+interface MapRestaurant {
+  id: number;
+  name: string;
+  status: string;
+  x_pct: number | null;
+  y_pct: number | null;
+  scene_url: string | null;
+}
+
+function DraggableRestaurant({
+  rest, contentW, contentH, onMove, onDragEnd,
+}: {
+  rest: MapRestaurant & { x_pct: number; y_pct: number };
+  contentW: number; contentH: number;
+  onMove: (x: number, y: number) => void;
+  onDragEnd: (x: number, y: number) => void;
+}) {
+  const startPct = useRef({ x: rest.x_pct, y: rest.y_pct });
+  const curPct   = useRef({ x: rest.x_pct, y: rest.y_pct });
+  const geo      = useRef({ x: rest.x_pct, y: rest.y_pct, w: contentW, h: contentH });
+  geo.current    = { x: rest.x_pct, y: rest.y_pct, w: contentW, h: contentH };
+  const moved    = useRef(false);
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        moved.current = false;
+        startPct.current = { x: geo.current.x, y: geo.current.y };
+        curPct.current   = { x: geo.current.x, y: geo.current.y };
+      },
+      onPanResponderMove: (_e, g) => {
+        moved.current = true;
+        const w = geo.current.w || 1;
+        const h = geo.current.h || 1;
+        const nx = Math.max(0, Math.min(1, startPct.current.x + g.dx / w));
+        const ny = Math.max(0, Math.min(1, startPct.current.y + g.dy / h));
+        curPct.current = { x: nx, y: ny };
+        onMove(nx, ny);
+      },
+      onPanResponderRelease: () => {
+        if (moved.current) onDragEnd(curPct.current.x, curPct.current.y);
+      },
+    }),
+  ).current;
+
+  const left = rest.x_pct * contentW - NODE_SIZE / 2;
+  const top  = rest.y_pct * contentH - NODE_SIZE / 2;
+
+  return (
+    <View
+      style={[s.missionNode, { left, top, backgroundColor: '#C9943D', borderColor: '#f0d9a8' }]}
+      {...responder.panHandlers}
+    >
+      <Text style={s.missionNodeSeq}>🍴</Text>
+    </View>
+  );
+}
+
 // ── MenuItemPicker ────────────────────────────────────────────────────────────
 
 function MenuItemPicker({
@@ -348,6 +411,11 @@ export default function PathMapTab() {
   const [advPickerOpen, setAdvPickerOpen] = useState(false);
   const [uploading,   setUploading]   = useState(false);
 
+  // ── Restaurant POIs (always-on map fixtures) ───────────────────────────────
+  const [mapRestaurants, setMapRestaurants] = useState<MapRestaurant[]>([]);
+  const [newRestName,    setNewRestName]    = useState('');
+  const [restBusy,       setRestBusy]       = useState(false);
+
   // ── Mission layers ─────────────────────────────────────────────────────────
   const [missions,       setMissions]       = useState<MissionLayer[]>([]);
   const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | null>(null);
@@ -406,7 +474,7 @@ export default function PathMapTab() {
     const availW = Math.max(0, frame.width - padX);
     const availH = Math.max(0, frame.height - BANNER_HEIGHT - padY - 24);
     if (availW <= 0 || availH <= 0) return { baseW: 0, baseH: 0, frameH: 0 };
-    const baseW = Math.min(availW, availH * ARTBOARD_ASPECT, 600);
+    const baseW = Math.min(availW, availH * ARTBOARD_ASPECT, 1100); // wide map → larger placement canvas
     const baseH = baseW / ARTBOARD_ASPECT;
     return { baseW, baseH, frameH: baseH };
   }, [frame.width, frame.height]);
@@ -445,13 +513,15 @@ export default function PathMapTab() {
   useEffect(() => {
     (async () => {
       try {
-        const [map, allRestaurants, advList] = await Promise.all([
+        const [map, allRestaurants, advList, restRows] = await Promise.all([
           Repos.pathMap.get(),
           Repos.restaurants.list().catch(() => [] as Restaurant[]),
           api.get('/admin/adventures').catch(() => []),
+          api.getAdminRestaurants().catch(() => ({ restaurants: [] })),
         ]);
         setSnacks(map.snacks ?? []);
         setRestaurants(allRestaurants);
+        setMapRestaurants(Array.isArray(restRows?.restaurants) ? restRows.restaurants : []);
         const rawList = Array.isArray(advList) ? advList : [];
         setMissions(rawList.map((a: any) => ({
           id: a.id,
@@ -629,6 +699,62 @@ export default function PathMapTab() {
     setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next)));
   };
 
+  // ── Restaurant POI operations ──────────────────────────────────────────────
+  const reloadRestaurants = useCallback(async () => {
+    try {
+      const data = await api.getAdminRestaurants();
+      setMapRestaurants(Array.isArray(data?.restaurants) ? data.restaurants : []);
+    } catch { showToast('Could not load restaurants', 'error'); }
+  }, []);
+
+  const addRestaurant = useCallback(async () => {
+    const name = newRestName.trim();
+    if (!name) return;
+    setRestBusy(true);
+    try {
+      await api.createRestaurant({ name });
+      setNewRestName('');
+      await reloadRestaurants();
+      showToast(`Added ${name}`, 'success');
+    } catch { showToast('Could not add restaurant', 'error'); }
+    finally { setRestBusy(false); }
+  }, [newRestName, reloadRestaurants]);
+
+  const placeRestaurant = useCallback(async (r: MapRestaurant) => {
+    // Drop at the centre; admin drags it into place from there.
+    setMapRestaurants((prev) => prev.map((x) => x.id === r.id ? { ...x, x_pct: 0.5, y_pct: 0.5 } : x));
+    try { await api.updateRestaurant(r.id, { x_pct: 0.5, y_pct: 0.5 }); }
+    catch { showToast('Could not place restaurant', 'error'); reloadRestaurants(); }
+  }, [reloadRestaurants]);
+
+  const unplaceRestaurant = useCallback(async (r: MapRestaurant) => {
+    setMapRestaurants((prev) => prev.map((x) => x.id === r.id ? { ...x, x_pct: null, y_pct: null } : x));
+    try { await api.updateRestaurant(r.id, { x_pct: null, y_pct: null }); }
+    catch { showToast('Could not remove restaurant', 'error'); reloadRestaurants(); }
+  }, [reloadRestaurants]);
+
+  const moveRestaurant = useCallback((id: number, x: number, y: number) => {
+    setMapRestaurants((prev) => prev.map((r) => r.id === id ? { ...r, x_pct: x, y_pct: y } : r));
+  }, []);
+
+  const saveRestaurantPosition = useCallback(async (id: number, x: number, y: number) => {
+    try { await api.updateRestaurant(id, { x_pct: x, y_pct: y }); }
+    catch { showToast('Could not save position', 'error'); }
+  }, []);
+
+  const uploadRestaurantSceneFor = useCallback(async (r: MapRestaurant) => {
+    const file = await pickImageForUpload();
+    if (!file) return;
+    setRestBusy(true);
+    try {
+      const data = await api.uploadRestaurantScene(r.id, file as any);
+      const url = data?.url ?? data?.restaurant?.scene_url ?? null;
+      setMapRestaurants((prev) => prev.map((x) => x.id === r.id ? { ...x, scene_url: url } : x));
+      showToast('Close-up uploaded', 'success');
+    } catch { showToast('Upload failed', 'error'); }
+    finally { setRestBusy(false); }
+  }, []);
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const adventureLabel = selected?.adventureId != null ? selected.adventureTitle ?? 'Mission' : 'None';
 
@@ -693,6 +819,20 @@ export default function PathMapTab() {
                         />
                       ));
                   })}
+
+                  {/* Restaurant POIs (always-on) — gold fork nodes */}
+                  {mapRestaurants
+                    .filter((r): r is MapRestaurant & { x_pct: number; y_pct: number } => r.x_pct != null && r.y_pct != null)
+                    .map((r) => (
+                      <DraggableRestaurant
+                        key={`rest-${r.id}`}
+                        rest={r}
+                        contentW={contentW}
+                        contentH={contentH}
+                        onMove={(x, y) => moveRestaurant(r.id, x, y)}
+                        onDragEnd={(x, y) => saveRestaurantPosition(r.id, x, y)}
+                      />
+                    ))}
 
                   {/* Placement crosshair overlay */}
                   {pendingPlacement && (
@@ -845,6 +985,54 @@ export default function PathMapTab() {
                   onClearStep={(step) => clearMissionStep(m.id, step.id)}
                 />
               ))}
+            </View>
+          )}
+
+          {/* ── RESTAURANTS (always-on POIs) ────────────────────────────── */}
+          {!selected && (
+            <View style={[s.section, { marginTop: spacing.xl }]}>
+              <Text style={s.sectionLabel}>Restaurants ({mapRestaurants.length})</Text>
+              <Text style={s.hint}>Always on the map unless closed. Add one, place it, drag to position, and give it a close-up.</Text>
+              <View style={s.addRow}>
+                <TextInput
+                  style={[s.input, { flex: 1 }]}
+                  value={newRestName}
+                  onChangeText={setNewRestName}
+                  placeholder="New restaurant name"
+                  placeholderTextColor={colors.text.placeholder}
+                  onSubmitEditing={addRestaurant}
+                />
+                <TouchableOpacity
+                  style={s.addBtn}
+                  onPress={addRestaurant}
+                  activeOpacity={0.85}
+                  disabled={restBusy || !newRestName.trim()}
+                >
+                  <Text style={s.addBtnText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+              {mapRestaurants.length === 0 && (
+                <Text style={s.hint}>No restaurants yet. Add one above.</Text>
+              )}
+              {mapRestaurants.map((r) => {
+                const placed = r.x_pct != null && r.y_pct != null;
+                return (
+                  <View key={r.id} style={s.listRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.listTitle} numberOfLines={1}>{r.name}</Text>
+                      <Text style={s.listMeta} numberOfLines={1}>
+                        {placed ? 'On map' : 'Not placed'} · {r.scene_url ? 'Close-up ✓' : 'No close-up'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => uploadRestaurantSceneFor(r)} activeOpacity={0.7} style={{ paddingHorizontal: spacing.sm }} disabled={restBusy}>
+                      <Text style={s.backLink}>{r.scene_url ? 'Replace' : 'Close-up'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => placed ? unplaceRestaurant(r) : placeRestaurant(r)} activeOpacity={0.7} style={{ paddingHorizontal: spacing.sm }}>
+                      <Text style={s.backLink}>{placed ? 'Remove' : 'Place'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
             </View>
           )}
         </ScrollView>

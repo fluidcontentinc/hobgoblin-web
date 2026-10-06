@@ -19,6 +19,11 @@ export interface AdventureMapNode {
   /** Resolution-independent position (0..1). Preferred by new callers. */
   xPct: number;
   yPct: number;
+  /** Geofence centre for `gps` steps (used by automatic check-in). */
+  lat?: number | null;
+  lng?: number | null;
+  /** Geofence radius in metres for `gps` steps. */
+  radiusMeters?: number | null;
   title: string;
   description?: string;
   requirementType?: string;
@@ -96,6 +101,11 @@ export interface AdventureRepository {
   getAdventureMap(adventureId: number): Promise<AdventureMap | null>;
   uploadProof(file: File | Blob): Promise<ProofUploadResult>;
   submitProof(stepId: number, assetId: number): Promise<ProofSubmission>;
+  /**
+   * Automatic GPS geofence check-in for a `gps` step. The geofence is the
+   * proof, so the backend auto-approves — no photo, no parent review.
+   */
+  checkIn(stepId: number, lat: number, lng: number, accuracy?: number): Promise<ProofSubmission>;
   startAdventure?(adventureId: number, snackId?: string | null): Promise<AdventureStartResult>;
   getLeaderboard?(adventureId: number): Promise<Leaderboard>;
 }

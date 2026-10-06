@@ -68,7 +68,7 @@ export default function LoginView({
         onChangeText={setPassword}
         placeholder="Password"
         placeholderTextColor="rgba(255,255,255,0.35)"
-        secureTextEntry
+        secureTextEntry={password.length > 0}
         style={styles.input}
         editable={!loading}
         onSubmitEditing={handleLogin}

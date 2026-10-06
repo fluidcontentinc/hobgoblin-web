@@ -1,4 +1,5 @@
 import api from '../api/client';
+import { resolveAssetUrl } from '../api/config';
 import type { PathMap, PathMapRepository, PathSnack, PathSnackSource } from './PathMapRepository';
 import { EMPTY_PATH_MAP } from './PathMapRepository';
 
@@ -19,8 +20,19 @@ export class ApiPathMapRepository implements PathMapRepository {
     try {
       const data = await api.getPathMap();
       const rawSnacks: any[] = Array.isArray(data?.snacks) ? data.snacks : [];
+      const rawRestaurants: any[] = Array.isArray(data?.restaurants) ? data.restaurants : [];
       return {
         snacks: rawSnacks.map(fromApi).filter((s): s is PathSnack => s !== null),
+        restaurants: rawRestaurants
+          .filter((r) => r && typeof r.x_pct === 'number' && typeof r.y_pct === 'number')
+          .map((r) => ({
+            id: r.id,
+            name: r.name ?? '',
+            xPct: r.x_pct,
+            yPct: r.y_pct,
+            sceneUrl: resolveAssetUrl(r.scene_url) || null,
+            logoUrl: resolveAssetUrl(r.logo_url) || null,
+          })),
         updatedAt: data?.updated_at ?? '',
       };
     } catch (error: any) {
@@ -38,6 +50,9 @@ export class ApiPathMapRepository implements PathMapRepository {
     const rawSnacks: any[] = Array.isArray(data?.snacks) ? data.snacks : [];
     return {
       snacks: rawSnacks.map(fromApi).filter((s): s is PathSnack => s !== null),
+      // Restaurants are managed via the admin restaurant endpoints, not this
+      // snack save — preserve whatever the caller already had.
+      restaurants: map.restaurants ?? [],
       updatedAt: data?.updated_at ?? new Date().toISOString(),
     };
   }
@@ -47,7 +62,8 @@ export class ApiPathMapRepository implements PathMapRepository {
 function fromApi(raw: any): PathSnack | null {
   if (!raw || typeof raw !== 'object') return null;
   const id = raw.id != null ? String(raw.id) : null;
-  const image = typeof raw.image === 'string' ? raw.image : null;
+  const rawImage = typeof raw.image === 'string' ? raw.image : null;
+  const image = rawImage ? resolveAssetUrl(rawImage) : null;
   const source: PathSnackSource = raw.source === 'menu' ? 'menu' : 'upload';
   const xPct = clamp01(Number(raw.x_pct ?? raw.xPct ?? 0));
   const yPct = clamp01(Number(raw.y_pct ?? raw.yPct ?? 0));

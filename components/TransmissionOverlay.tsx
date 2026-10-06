@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, Dimensions, Platform } from 'react-native';
+import { resolveAssetUrl } from '../src/api/config';
 import type { Transmission } from '../state';
 
 // Try to import expo-av, fallback to web-compatible solutions
@@ -44,7 +45,9 @@ export default function TransmissionOverlay({ transmission, visible, onDismiss }
   if (!transmission || !visible) return null;
 
   const { type, payload } = transmission;
-  const mediaUrl = payload.url || payload.mediaUrl || payload.src;
+  // Resolve through resolveAssetUrl so local-backend (marketplace-engine.test)
+  // URLs get rebased onto a host the phone can actually reach over the tunnel.
+  const mediaUrl = resolveAssetUrl(payload.url || payload.mediaUrl || payload.src);
   const mediaType = payload.type || payload.mediaType || type;
 
   const handleDismiss = async () => {

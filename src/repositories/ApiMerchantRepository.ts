@@ -1,7 +1,8 @@
-import type { MerchantRepository } from './MerchantRepository';
+import type { MerchantRepository, ParsedMenuRow } from './MerchantRepository';
 import type { MenuItemDto, MerchantHoursDto, MerchantOrderDto, StoreDto } from '../contracts/dto';
 import type { MerchantOrdersTab, MerchantOrderStatus } from '../contracts/status';
 import api from '../api/client';
+import { resolveAssetUrl } from '../api/config';
 
 /**
  * Marketplace-engine merchant routes:
@@ -47,7 +48,7 @@ export class ApiMerchantRepository implements MerchantRepository {
       status:             data?.status ?? 'open',
       cuisine:            data?.cuisine ?? null,
       description:        data?.description ?? null,
-      logo_url:           data?.logo_url ?? null,
+      logo_url:           resolveAssetUrl(data?.logo_url) || null,
       notification_email: data?.notification_email ?? null,
       notification_phone: data?.notification_phone ?? null,
     };
@@ -168,7 +169,31 @@ export class ApiMerchantRepository implements MerchantRepository {
 
   async getMenu(): Promise<MenuItemDto[]> {
     const data = await api.get('/merchant/menu');
-    return Array.isArray(data) ? data : [];
+    const rows: any[] = Array.isArray(data) ? data : [];
+    // Rebase uploaded photo URLs so they load on device, not just the dev browser.
+    return rows.map((it: any) => ({
+      ...it,
+      image_url: resolveAssetUrl(it?.image_url ?? it?.image) || null,
+    }));
+  }
+
+  /** Send a menu photo to the vision endpoint; returns candidate rows to review. */
+  async importMenuPhoto(file: any): Promise<ParsedMenuRow[]> {
+    const res = await api.postMultipart('/merchant/menu/import', { image: file });
+    const items: any[] = Array.isArray(res?.items) ? res.items : [];
+    return items
+      .map((r: any): ParsedMenuRow => {
+        const priceNum =
+          typeof r?.price === 'number'
+            ? r.price
+            : (r?.price != null && Number.isFinite(parseFloat(r.price)) ? parseFloat(r.price) : null);
+        return {
+          name: String(r?.name ?? '').trim(),
+          price: priceNum,
+          description: r?.description ? String(r.description) : '',
+        };
+      })
+      .filter((r) => r.name.length > 0);
   }
 
   /**
@@ -263,6 +288,6 @@ function transformMerchantItem(it: any) {
     name:      it.menuItem?.name ?? it.title ?? it.name ?? '',
     price:     typeof it.price_cents === 'number' ? it.price_cents / 100 : parseFloat(it.price) || 0,
     quantity:  it.quantity ?? 1,
-    imageUrl:  it.menuItem?.image_url ?? null,
+    imageUrl:  resolveAssetUrl(it.menuItem?.image_url) || null,
   };
 }

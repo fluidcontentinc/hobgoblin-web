@@ -193,7 +193,7 @@ export default function BrowseView({ onNavigateToMission, onNavigateToRestaurant
         )}
         <View style={styles.missionContent}>
           <View style={styles.missionHeader}>
-            <Text style={styles.missionTitle}>{item.title}</Text>
+            <Text style={styles.missionTitle} numberOfLines={1} ellipsizeMode="tail">{item.title}</Text>
             {(() => {
               const badge = kidStatusBadge(item.kidStatus);
               return (
@@ -284,9 +284,22 @@ export default function BrowseView({ onNavigateToMission, onNavigateToRestaurant
     return (
       <View style={styles.restaurantSection}>
         <View style={styles.restaurantHeader}>
-          <View>
-            <Text style={styles.restaurantName}>{item.name}</Text>
-            <Text style={styles.restaurantCuisine}>{item.cuisine}</Text>
+          <View style={styles.restaurantTitleRow}>
+            {item.logo ? (
+              <Image
+                source={{ uri: item.logo }}
+                style={styles.restaurantLogo}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.restaurantLogoFallback}>
+                <Text style={styles.restaurantLogoFallbackText}>No{'\n'}logo</Text>
+              </View>
+            )}
+            <View style={styles.restaurantTitleText}>
+              <Text style={styles.restaurantName}>{item.name}</Text>
+              <Text style={styles.restaurantCuisine}>{item.cuisine}</Text>
+            </View>
           </View>
           <TouchableOpacity onPress={() => onNavigateToRestaurant?.(item)} activeOpacity={0.8}>
             <Text style={styles.fullMenuText}>Full menu</Text>
@@ -594,6 +607,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '400',
+    letterSpacing: 0,
   },
   cuisineFilter: {
     marginBottom: 12,
@@ -716,19 +730,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 4,
   },
   missionTitle: {
     fontSize: 18,
     fontWeight: '400',
     color: '#FFFFFF',
     flex: 1,
+    flexShrink: 1,
+    marginRight: 8,
   },
   statusBadge: {
     backgroundColor: '#233C15',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
+    flexShrink: 0,
   },
   statusText: {
     fontSize: 12,
@@ -742,7 +759,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textTransform: 'uppercase',
     letterSpacing: 2,
-    marginBottom: 8,
+    marginBottom: 2,
   },
   missionPoints: {
     fontSize: 14,
@@ -763,6 +780,37 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 12,
+  },
+  restaurantTitleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  restaurantTitleText: {
+    flex: 1,
+  },
+  restaurantLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 4,
+    backgroundColor: '#27272a',
+  },
+  restaurantLogoFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  restaurantLogoFallbackText: {
+    fontSize: 9,
+    lineHeight: 11,
+    color: 'rgba(255,255,255,0.4)',
+    textAlign: 'center',
   },
   restaurantName: {
     fontSize: 16,

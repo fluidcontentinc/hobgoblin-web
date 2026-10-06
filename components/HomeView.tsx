@@ -34,7 +34,7 @@ export default function HomeView({ showView, inboxUnread = 0 }: HomeViewProps) {
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
           {/* Top-left inbox icon with unread badge */}
           <TouchableOpacity
-            style={styles.inboxButton}
+            style={[styles.inboxButton, { top: insets.top + 35 }]}
             onPress={() => showView('inbox')}
             activeOpacity={0.8}
             accessibilityRole="button"
@@ -154,23 +154,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    bottom: 90,      // sits above the bottom nav (matches mockup)
+    bottom: 50,      // overlaps the lower part of the bottom nav (~74px tall)
     flexDirection: 'row',
     gap: 16,
   },
   inboxButton: {
     position: 'absolute',
-    top: 12,
+    // `top` is set inline from safe-area insets so it clears the notch.
     left: 16,
-    width: 64,
-    height: 64,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
   inboxIcon: {
-    width: 64,
-    height: 64,
+    width: 44,
+    height: 44,
   },
   inboxBadge: {
     position: 'absolute',

@@ -420,6 +420,32 @@ const api = {
     };
   },
 
+  /**
+   * Automatic GPS geofence check-in for a `gps` step.
+   * Engine path is /adventures/steps/{step}/check-in with { lat, lng, accuracy? }.
+   *
+   * The geofence is the proof, so the engine auto-approves — no photo, no
+   * parent review. Response mirrors submitProof (completion + unlocked steps +
+   * transmissions), re-shaped to a single `transmission` field for the repo.
+   */
+  async checkIn(stepId: number, lat: number, lng: number, accuracy?: number): Promise<any> {
+    const data = await this.post(
+      `/adventures/steps/${stepId}/check-in`,
+      accuracy != null ? { lat, lng, accuracy } : { lat, lng },
+    );
+    const c = data?.completion ?? {};
+    return {
+      id: c.id,
+      stepId,
+      assetId: 0,
+      status: c.status,
+      submittedAt: c.submitted_at,
+      proofUrl: c.proof_url ?? null,
+      unlockedSteps: data?.unlocked_steps ?? [],
+      transmission: (data?.transmissions && data.transmissions[0]) || null,
+    };
+  },
+
   /** Leaderboard. Engine: {adventure, leaderboard[]}. */
   async getLeaderboard(adventureId: number): Promise<any> {
     return await this.get(`/adventures/${adventureId}/leaderboard`);
@@ -467,6 +493,24 @@ const api = {
    */
   async uploadPathMapImage(file: File | Blob | { uri: string; name?: string; type?: string }): Promise<{ url: string }> {
     return await this.postMultipart('/admin/path-map/images', { file });
+  },
+
+  // ── admin restaurant catalog (always-on map POIs) ─────────────────────────
+  /** GET /api/admin/restaurants — full catalog (any status) for the picker. */
+  async getAdminRestaurants(): Promise<any> {
+    return await this.get('/admin/restaurants');
+  },
+  /** POST /api/admin/restaurants — create a restaurant. */
+  async createRestaurant(body: { name: string; cuisine?: string; status?: string; x_pct?: number | null; y_pct?: number | null }): Promise<any> {
+    return await this.post('/admin/restaurants', body);
+  },
+  /** PATCH /api/admin/restaurants/{id} — update name/status/map position. */
+  async updateRestaurant(id: number, body: Record<string, any>): Promise<any> {
+    return await this.patch(`/admin/restaurants/${id}`, body);
+  },
+  /** POST /api/admin/restaurants/{id}/scene — multipart close-up upload, returns { url, restaurant }. */
+  async uploadRestaurantScene(id: number, file: File | Blob | { uri: string; name?: string; type?: string }): Promise<any> {
+    return await this.postMultipart(`/admin/restaurants/${id}/scene`, { file });
   },
 
   // ── parent ──────────────────────────────────────────────────────────────

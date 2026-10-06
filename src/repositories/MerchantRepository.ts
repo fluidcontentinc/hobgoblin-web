@@ -1,6 +1,9 @@
 import type { MerchantHoursDto, MerchantOrderDto, MenuItemDto, StoreDto } from '../contracts/dto';
 import type { MerchantOrdersTab, MerchantOrderStatus } from '../contracts/status';
 
+/** A candidate menu item parsed from a photo, pending merchant review. */
+export type ParsedMenuRow = { name: string; price: number | null; description?: string };
+
 export interface MerchantRepository {
   getStore(): Promise<StoreDto>;
   createStore(input: { name: string; cuisine?: string }): Promise<StoreDto>;
@@ -15,6 +18,8 @@ export interface MerchantRepository {
   patchOrder(id: number, input: { status?: MerchantOrderStatus; prepTimeMinutes?: number; reject?: boolean }): Promise<MerchantOrderDto>;
 
   getMenu(): Promise<MenuItemDto[]>;
+  /** Send a menu photo to the vision endpoint; returns candidate rows to review. */
+  importMenuPhoto(file: File | Blob | { uri: string; name: string; type: string }): Promise<ParsedMenuRow[]>;
   /** Optionally pass `image` as a File/Blob; the repo will switch to multipart. */
   postMenuItem(input: Omit<MenuItemDto, 'id'> & { image?: File | Blob | null }): Promise<MenuItemDto>;
   patchMenuItem(id: number, input: Partial<Omit<MenuItemDto, 'id'>> & { image?: File | Blob | null }): Promise<MenuItemDto>;

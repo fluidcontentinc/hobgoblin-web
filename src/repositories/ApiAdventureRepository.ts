@@ -54,6 +54,10 @@ export function transformRawMapNode(node: any): AdventureMapNode {
   // Prefer admin-placed pct coordinates from the DB. Fall back to the
   // hardcoded zigzag by sequence when both are null (legacy adventures
   // and steps the admin hasn't placed on the parchment yet).
+  //
+  // x_pct / y_pct are 0.0–1.0 fractions of the map image (downstream renders
+  // them as `xPct * imageDimensions.width`). They are NOT 0–100 percentages;
+  // any 0–100 → /100 conversion belongs in admin data-seeding, not here.
   const xPct: number | null = typeof node.x_pct === 'number' ? node.x_pct : null;
   const yPct: number | null = typeof node.y_pct === 'number' ? node.y_pct : null;
 
@@ -77,6 +81,9 @@ export function transformRawMapNode(node: any): AdventureMapNode {
     y,
     xPct: xPct ?? x / MAP_REF_WIDTH,
     yPct: yPct ?? y / MAP_REF_HEIGHT,
+    lat: typeof node.lat === 'number' ? node.lat : null,
+    lng: typeof node.lng === 'number' ? node.lng : null,
+    radiusMeters: typeof node.radius_meters === 'number' ? node.radius_meters : null,
     title: node.title ?? '',
     description: node.description ?? undefined,
     requirementType: node.requirement_type ?? undefined,
@@ -154,6 +161,26 @@ export class ApiAdventureRepository implements AdventureRepository {
       };
     } catch (error: any) {
       console.error(`Error submitting proof for step ${stepId}:`, error);
+      if (error.type) {
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  async checkIn(stepId: number, lat: number, lng: number, accuracy?: number): Promise<ProofSubmission> {
+    try {
+      const data = await api.checkIn(stepId, lat, lng, accuracy);
+      return {
+        id: data.id,
+        stepId: data.stepId,
+        assetId: data.assetId,
+        status: data.status,
+        submittedAt: data.submittedAt,
+        transmission: data.transmission ? this.transformTransmission(data.transmission) : null,
+      };
+    } catch (error: any) {
+      console.error(`Error checking in for step ${stepId}:`, error);
       if (error.type) {
         throw error;
       }

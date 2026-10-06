@@ -1,32 +1,36 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, ImageSourcePropType } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCart } from '../src/usecases/store';
 
-type ViewName = 'home' | 'browse' | 'orders' | 'account' | 'inbox';
+type ViewName = 'home' | 'browse' | 'world' | 'orders' | 'account' | 'inbox';
 
 interface BottomNavigationProps {
   currentView: ViewName;
   onNavigate: (view: ViewName) => void;
 }
 
-const MOON_ICONS: Record<'home' | 'browse' | 'orders' | 'account', ImageSourcePropType> = {
+const MOON_ICONS: Record<'home' | 'browse' | 'world' | 'orders' | 'account', ImageSourcePropType> = {
   home:    require('../assets/moon-home.png'),
   browse:  require('../assets/moon-browse.png'),
+  world:   require('../assets/home-world/Shield-10.png'),
   orders:  require('../assets/moon-orders.png'),
   account: require('../assets/moon-account.png'),
 };
 
 export default function BottomNavigation({ currentView, onNavigate }: BottomNavigationProps) {
+  const insets = useSafeAreaInsets();
   const cart = useCart();
   const cartCount = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
-  const navItems: { id: 'home' | 'browse' | 'orders' | 'account'; label: string }[] = [
+  const navItems: { id: 'home' | 'browse' | 'world' | 'orders' | 'account'; label: string }[] = [
     { id: 'home',    label: 'Home'    },
     { id: 'browse',  label: 'Browse'  },
+    { id: 'world',   label: 'World'   },
     { id: 'account', label: 'Account' },
   ];
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {navItems.map((item) => {
         const isActive = currentView === item.id;
         const badgeCount = item.id === 'orders' ? cartCount : 0;
@@ -68,7 +72,7 @@ export default function BottomNavigation({ currentView, onNavigate }: BottomNavi
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 6,
+    bottom: 0,
     left: 0,
     right: 0,
     backgroundColor: '#000000',
@@ -82,20 +86,20 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 52,
+    minHeight: 44,
     minWidth: 44,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 5,
+    paddingBottom: 5,
   },
   iconWrap: {
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   moon: {
-    width: 30,
-    height: 30,
+    width: 26,
+    height: 26,
   },
   moonInactive: {
     opacity: 0.55,

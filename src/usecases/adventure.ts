@@ -24,6 +24,14 @@ export const AdventureActions = {
   },
 
   /**
+   * Automatic GPS geofence check-in for a `gps` step. The geofence is the
+   * proof, so the backend auto-approves — no photo upload, no parent review.
+   */
+  async checkIn(stepId: number, lat: number, lng: number, accuracy?: number): Promise<ProofSubmission> {
+    return await Repos.adventure.checkIn(stepId, lat, lng, accuracy);
+  },
+
+  /**
    * Refresh map data for an adventure (reloads the map)
    */
   async refreshMap(adventureId: number): Promise<AdventureMap | null> {

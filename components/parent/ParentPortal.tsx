@@ -20,7 +20,10 @@ import { ParentActions, currentStepOf, nextStepOf } from '../../src/usecases/par
 import { Repos } from '../../src/usecases/repos';
 import { showToast } from '../common/Toast';
 import HelpFAQView from '../HelpFAQView';
+import PrivacyPolicyView from '../PrivacyPolicyView';
+import TermsView from '../TermsView';
 import BrowseView from '../BrowseView';
+import { useCurrentUser } from '../../src/usecases/store';
 import type { Kid, KidProgress, PendingCompletion, InviteCode } from '../../src/repositories/ParentRepository';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -684,7 +687,7 @@ function KidDetail({ kid, onBack, onApprove, onReject, processingId }: KidDetail
   return (
     <View style={{ flex: 1 }}>
       {/* Header */}
-      <View style={[s.detailHeader, { paddingTop: insets.top + 8 }]}>
+      <View style={[s.detailHeader, { paddingTop: 12 }]}>
         <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.7}>
           <Text style={s.backBtnText}>‹ Back</Text>
         </TouchableOpacity>
@@ -909,7 +912,8 @@ interface AccountTabProps {
 
 function AccountTab({ onSignOut }: AccountTabProps) {
   const insets = useSafeAreaInsets();
-  const [showFaq, setShowFaq] = useState(false);
+  const currentUser = useCurrentUser();
+  const [staticPage, setStaticPage] = useState<'faq' | 'privacy' | 'terms' | null>(null);
 
   const handleSignOut = async () => {
     if (Platform.OS === 'web') {
@@ -931,9 +935,9 @@ function AccountTab({ onSignOut }: AccountTabProps) {
     }
   };
 
-  if (showFaq) {
-    return <HelpFAQView role="parent" onBack={() => setShowFaq(false)} />;
-  }
+  if (staticPage === 'faq') return <HelpFAQView role="parent" onBack={() => setStaticPage(null)} />;
+  if (staticPage === 'privacy') return <PrivacyPolicyView onBack={() => setStaticPage(null)} />;
+  if (staticPage === 'terms') return <TermsView onBack={() => setStaticPage(null)} />;
 
   return (
     <ScrollView
@@ -943,19 +947,33 @@ function AccountTab({ onSignOut }: AccountTabProps) {
       <Text style={s.screenTitle}>Account</Text>
       <Text style={s.screenSubtitle}>PARENT SETTINGS</Text>
 
-      <View style={s.card}>
-        <Text style={s.settingsRowLabel}>Role</Text>
-        <Text style={s.settingsRowValue}>Parent</Text>
+      {/* Logged-in card — same shape as the kids/standard account screen */}
+      <View style={s.acctUserCard}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.acctUserLabel}>LOGGED IN AS</Text>
+          <Text style={s.acctUserRole}>Parent</Text>
+          {!!currentUser?.email && <Text style={s.acctUserEmail}>{currentUser.email}</Text>}
+        </View>
+        <TouchableOpacity onPress={handleSignOut} activeOpacity={0.8}>
+          <Text style={s.acctSignOutLink}>SIGN OUT</Text>
+        </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={s.card} onPress={() => setShowFaq(true)} activeOpacity={0.75}>
-        <Text style={s.settingsRowLabel}>Help & FAQ</Text>
-        <Text style={s.settingsRowValue}>What parents can do</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={[s.card, s.signOutCard]} onPress={handleSignOut} activeOpacity={0.75}>
-        <Text style={s.signOutText}>Sign Out</Text>
-      </TouchableOpacity>
+      {/* Help & Legal — mirrors the kids account so parents get the same options */}
+      <View style={s.acctCard}>
+        <Text style={s.acctCardTitle}>Help & Legal</Text>
+        <Text style={s.acctCardSubtitle}>SUPPORT AND POLICIES</Text>
+        <View style={{ height: 10 }} />
+        <TouchableOpacity style={s.acctRowBtn} onPress={() => setStaticPage('faq')} activeOpacity={0.8}>
+          <Text style={s.acctRowBtnText}>Help & FAQ</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.acctRowBtn} onPress={() => setStaticPage('privacy')} activeOpacity={0.8}>
+          <Text style={s.acctRowBtnText}>Privacy Policy</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.acctRowBtn} onPress={() => setStaticPage('terms')} activeOpacity={0.8}>
+          <Text style={s.acctRowBtnText}>Terms of Service</Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
@@ -967,8 +985,6 @@ export interface ParentPortalProps {
 }
 
 export default function ParentPortal({ onExit }: ParentPortalProps) {
-  const insets = useSafeAreaInsets();
-
   const [tab, setTab]       = useState<ParentTab>('kids');
   const [page, setPage]     = useState<Page>('main');
   const [selectedKid, setSelectedKid] = useState<Kid | null>(null);
@@ -1128,7 +1144,7 @@ export default function ParentPortal({ onExit }: ParentPortalProps) {
   return (
     <View style={s.root}>
       {/* Top bar */}
-      <View style={[s.topbar, { paddingTop: insets.top + 8 }]}>
+      <View style={[s.topbar, { paddingTop: 12 }]}>
         <Text style={s.topbarTitle}>Hobgoblin Hunt</Text>
         {completions.length > 0 && (
           <TouchableOpacity
@@ -1193,8 +1209,8 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingBottom: 14,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.06)',
     backgroundColor: '#000',
@@ -1278,8 +1294,8 @@ const s = StyleSheet.create({
     backgroundColor: '#000',
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 16,
+    paddingTop: 10,
   },
   screenTitle: {
     fontSize: 30,
@@ -1291,7 +1307,7 @@ const s = StyleSheet.create({
   screenSubtitle: {
     fontSize: 11,
     color: 'rgba(255,255,255,0.4)',
-    letterSpacing: 3,
+    letterSpacing: 1.5,
     textTransform: 'uppercase',
     marginTop: 4,
     marginBottom: 20,
@@ -1302,7 +1318,7 @@ const s = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     color: '#C9943D',
-    letterSpacing: 3,
+    letterSpacing: 1.5,
     textTransform: 'uppercase',
     fontWeight: '700',
     marginBottom: 10,
@@ -1517,7 +1533,7 @@ const s = StyleSheet.create({
   codeText: {
     fontFamily: 'serif',
     fontSize: 36,
-    letterSpacing: 8,
+    letterSpacing: 4,
     color: '#F6E3AE',
     fontWeight: '700',
   },
@@ -1581,7 +1597,7 @@ const s = StyleSheet.create({
   inviteCodeText: {
     fontFamily: 'serif',
     fontSize: 26,
-    letterSpacing: 5,
+    letterSpacing: 2.5,
     color: '#F6E3AE',
     fontWeight: '700',
   },
@@ -1636,6 +1652,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginTop: 6,
+    marginRight: 4,
   },
   addKidBtnText: {
     color: '#000',
@@ -1777,6 +1794,79 @@ const s = StyleSheet.create({
     color: '#C9943D',
     fontSize: 16,
     fontWeight: '700',
+  },
+
+  // Account tab — matches the kids/standard account screen styling
+  acctUserCard: {
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 4,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  acctUserLabel: {
+    fontSize: 10,
+    color: '#71717a',
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  acctUserRole: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  acctUserEmail: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 4,
+  },
+  acctSignOutLink: {
+    fontSize: 10,
+    color: '#C9943D',
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    fontWeight: '700',
+  },
+  acctCard: {
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 4,
+    padding: 14,
+    marginBottom: 12,
+  },
+  acctCardTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  acctCardSubtitle: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 10,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  acctRowBtn: {
+    minHeight: 44,
+    borderRadius: 4,
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  acctRowBtnText: {
+    color: '#C9943D',
+    fontSize: 10,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
 
   // "Where they are" (kid detail)

@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import api from '../src/api/client';
+import { resolveAssetUrl } from '../src/api/config';
 import type { Transmission } from '../state';
 import TransmissionOverlay from './TransmissionOverlay';
 
@@ -152,7 +153,7 @@ export default function InboxView({ onUnreadCountChange }: InboxViewProps) {
 
         {items.map((item) => {
           const isUnread = !item.read_at;
-          const previewUrl = item.type === 'image' ? item.url : item.thumbnail_url;
+          const previewUrl = resolveAssetUrl(item.type === 'image' ? item.url : item.thumbnail_url);
 
           return (
             <TouchableOpacity
