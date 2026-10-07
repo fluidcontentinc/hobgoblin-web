@@ -44,6 +44,16 @@ export function transformTransmission(data: any): any {
   };
 }
 
+/** Laravel decimal casts serialize as strings ("41.88000000"); accept both. */
+function toNumberOrNull(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 /**
  * Transform one raw backend map node (snake_case, from `map_nodes`) into the
  * frontend AdventureMapNode shape. Shared by the kid map (ApiAdventureRepository)
@@ -58,8 +68,8 @@ export function transformRawMapNode(node: any): AdventureMapNode {
   // x_pct / y_pct are 0.0–1.0 fractions of the map image (downstream renders
   // them as `xPct * imageDimensions.width`). They are NOT 0–100 percentages;
   // any 0–100 → /100 conversion belongs in admin data-seeding, not here.
-  const xPct: number | null = typeof node.x_pct === 'number' ? node.x_pct : null;
-  const yPct: number | null = typeof node.y_pct === 'number' ? node.y_pct : null;
+  const xPct = toNumberOrNull(node.x_pct);
+  const yPct = toNumberOrNull(node.y_pct);
 
   let x: number;
   let y: number;
@@ -81,9 +91,9 @@ export function transformRawMapNode(node: any): AdventureMapNode {
     y,
     xPct: xPct ?? x / MAP_REF_WIDTH,
     yPct: yPct ?? y / MAP_REF_HEIGHT,
-    lat: typeof node.lat === 'number' ? node.lat : null,
-    lng: typeof node.lng === 'number' ? node.lng : null,
-    radiusMeters: typeof node.radius_meters === 'number' ? node.radius_meters : null,
+    lat: toNumberOrNull(node.lat),
+    lng: toNumberOrNull(node.lng),
+    radiusMeters: toNumberOrNull(node.radius_meters),
     title: node.title ?? '',
     description: node.description ?? undefined,
     requirementType: node.requirement_type ?? undefined,

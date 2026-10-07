@@ -231,12 +231,12 @@ const api = {
     return await this.postMultipart(path, { ...fields, _method: 'PATCH' });
   },
 
-  async post(path: string, body: any): Promise<any> {
+  async post(path: string, body: any, extraHeaders: Record<string, string> = {}): Promise<any> {
     const url = `${API_BASE_URL}${path}`;
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: await getHeaders(),
+        headers: { ...(await getHeaders()), ...extraHeaders },
         body: JSON.stringify(body),
       });
       if (!response.ok) throw await buildHttpError(response);

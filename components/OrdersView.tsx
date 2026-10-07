@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { safeGetJson, safeSetJson } from '../utils/storage';
 import type { Order, CartItem } from '../state';
@@ -53,6 +53,12 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
 
   const cart = useCart();
   const currentUser = useCurrentUser();
+
+  // One key per restaurant group, kept across "try again" so a lost response can't double-order.
+  const checkoutKeys = useRef<Record<string, string>>({});
+  useEffect(() => {
+    checkoutKeys.current = {};
+  }, [cart]);
   
   // Update when cart changes (triggered by cart operations)
   const updateCart = () => {
@@ -157,7 +163,8 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
       
       // Create orders via repository for each restaurant group
       const newOrders: Order[] = [];
-      for (const orderData of Object.values(cartItemsByRestaurant)) {
+      for (const [groupKey, orderData] of Object.entries(cartItemsByRestaurant)) {
+        checkoutKeys.current[groupKey] ??= `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         // Get item names from cart items
         const itemNames: string[] = [];
         cart.forEach(cartItem => {
@@ -173,6 +180,7 @@ export default function OrdersView({ onNavigateToOrder }: OrdersViewProps = {}) 
           restaurantName: orderData.restaurantName,
           items: itemNames.length > 0 ? itemNames : orderData.items.map(() => 'Item'),
           lines: orderData.items,
+          idempotencyKey: checkoutKeys.current[groupKey],
           total: orderData.total,
           state: 'created',
           status: 'created',

@@ -27,12 +27,12 @@ export class ApiOrdersRepository implements OrdersRepository {
     }
   }
 
-  async create(order: Omit<Order, 'id' | 'date'> & { lines: OrderLine[] }): Promise<Order> {
+  async create(order: Omit<Order, 'id' | 'date'> & { lines: OrderLine[]; idempotencyKey?: string }): Promise<Order> {
     try {
       const payload: Record<string, any> = { items: order.lines };
       if (order.deliveryAddress) payload.delivery_address = order.deliveryAddress;
       if (order.deliveryNotes) payload.delivery_notes = order.deliveryNotes;
-      const data = await api.post('/orders', payload);
+      const data = await api.post('/orders', payload, order.idempotencyKey ? { 'Idempotency-Key': order.idempotencyKey } : {});
       const transformed = this.transformOrder(data);
       if (!transformed) throw new Error('Empty response from order create');
       return transformed;
